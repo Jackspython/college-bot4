@@ -1,0 +1,16 @@
+[
+  {
+    "id": 1,
+    "title": "Major 3 - Waves & Optics Practical Lab Manual Submission",
+    "deadline": "15-10-2026 16:00",
+    "reminded_24h": false,
+    "reminded_3h": false
+  },
+  {
+    "id": 2,
+    "title": "SEC 3 - Python Numerical Assignment 1",
+    "deadline": "20-10-2026 14:00",
+    "reminded_24h": false,
+    "reminded_3h": false
+  }
+]

@@ -1,0 +1,26 @@
+[
+  {
+    "id": 1,
+    "title": "Major 3 - Waves & Oscillations Complete Notes",
+    "subject": "Physics",
+    "filename": "major3_waves.pdf",
+    "size": "2.4 MB",
+    "uploaded_at": "2026-01-15T10:00:00Z"
+  },
+  {
+    "id": 2,
+    "title": "Major 4 - Analog Electronics Op-Amp Cheatsheet",
+    "subject": "Physics",
+    "filename": "major4_opamp.pdf",
+    "size": "1.8 MB",
+    "uploaded_at": "2026-01-18T14:20:00Z"
+  },
+  {
+    "id": 3,
+    "title": "SEC 3 - Python Computational Physics Numerical Methods",
+    "subject": "Computer",
+    "filename": "sec3_python_methods.pdf",
+    "size": "3.1 MB",
+    "uploaded_at": "2026-01-20T16:00:00Z"
+  }
+]

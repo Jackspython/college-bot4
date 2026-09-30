@@ -36,9 +36,16 @@ export default {
   // 📂 Temporary files directory (Telegram upload ke baad delete ho jayegi - 0 server storage)
   TEMP_DIR: './temp',
 
+  // 📂 Uploaded Notes aur PDFs ka folder
+  FILES_DIR: './data/files',
+
   // 🤖 Telegram Bot Backup Settings (@BotFather & @userinfobot se lo)
   TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN || '8822830634:AAH3SSxMbDE6HynFisPD696hunYBgU3R0Mg',
   ADMIN_CHAT_ID: process.env.ADMIN_CHAT_ID || '5610762471',
+
+  // 🎓 College details
+  COLLEGE_NAME: 'Dinhata College',
+  DEPARTMENT: 'Department of Physics',
 
   // 🌤️ Weather Location (Open-Meteo API ke liye - Kolkata default)
   WEATHER_LOCATION: {
