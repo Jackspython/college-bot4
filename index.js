@@ -16,12 +16,19 @@
  * ============================================================================
  */
 
-import makeWASocket, {
-  DisconnectReason,
-  useMultiFileAuthState,
-  Browsers,
-  downloadMediaMessage
-} from '@whiskeysockets/baileys';
+import * as BaileysModule from '@whiskeysockets/baileys';
+
+// Universal resolution across Node 18/20/22/24 and different Baileys bundle versions
+const _baileys = (BaileysModule.default && typeof BaileysModule.default === 'object') ? BaileysModule.default : BaileysModule;
+const makeWASocket = typeof BaileysModule.makeWASocket === 'function' 
+  ? BaileysModule.makeWASocket 
+  : (typeof _baileys.makeWASocket === 'function' 
+      ? _baileys.makeWASocket 
+      : (typeof _baileys.default === 'function' ? _baileys.default : BaileysModule.default));
+const DisconnectReason = _baileys.DisconnectReason || BaileysModule.DisconnectReason;
+const useMultiFileAuthState = _baileys.useMultiFileAuthState || BaileysModule.useMultiFileAuthState;
+const Browsers = _baileys.Browsers || BaileysModule.Browsers;
+const downloadMediaMessage = _baileys.downloadMediaMessage || BaileysModule.downloadMediaMessage;
 import cron from 'node-cron';
 import moment from 'moment-timezone';
 import fs from 'fs';
@@ -92,8 +99,13 @@ function saveRuntimeConfig() {
 let tgBot = null;
 if (CONFIG.TELEGRAM_BOT_TOKEN && CONFIG.TELEGRAM_BOT_TOKEN !== 'YOUR_BOT_TOKEN_HERE') {
   try {
-    tgBot = new TelegramBot(CONFIG.TELEGRAM_BOT_TOKEN, { polling: false });
-    console.log('🤖 Telegram backup bot initialized!');
+    tgBot = new TelegramBot(CONFIG.TELEGRAM_BOT_TOKEN, { polling: true });
+    tgBot.on('polling_error', (error) => {
+      if (error && error.code !== 'EFATAL') {
+        console.warn('⚠️ Telegram polling issue:', error.message || error);
+      }
+    });
+    console.log('🤖 Telegram backup bot & companion initialized with interactive polling!');
   } catch (err) {
     console.error('❌ Telegram Bot Init Error:', err.message);
   }
@@ -233,6 +245,62 @@ const saveHolidays = () => { saveJson(HOLIDAYS_FILE, holidays); sendToTelegram('
 const saveAbsences = () => { saveJson(ABSENCES_FILE, absences); sendToTelegram('absences', absences); };
 const saveStarted = () => { saveJson(STARTED_FILE, startedClasses); };
 const savePollMsg = () => { saveJson(POLL_FILE, lastPollMessage); };
+
+// ==================== TELEGRAM INTERACTIVE COMPANION COMMANDS ====================
+if (tgBot) {
+  // 1. /start command
+  tgBot.onText(/\/start/, (msg) => {
+    const chatId = msg.chat.id;
+    const isWaConnected = sock && sock.user;
+    const welcome = `👋 *Namaste Admin!*\n\n` +
+      `Main aapke *College WhatsApp Bot* ka Cloud Companion hoon.\n\n` +
+      `📊 *Status:* Online & Active 🚀\n` +
+      `🤖 *WhatsApp:* ${isWaConnected ? 'Connected ✅' : 'Connecting / QR Pending ⏳'}\n` +
+      `👥 *Target Group ID:* \`${currentConfig.GROUP_ID}\`\n` +
+      `👑 *Master Admin:* \`${currentConfig.ADMIN_NUMBER}\`\n\n` +
+      `⚡ *Interactive Telegram Commands:*\n` +
+      `• \`/status\` - WhatsApp Bot aur classes ka status dekho\n` +
+      `• \`/backup\` - Instant Full Cloud Backup JSON receive karo\n` +
+      `• \`/ping\` - Connection test karo\n\n` +
+      `☁️ *Storage Info:* Zero Server Storage Mode is active. Saara data is chat par automatically backup hota hai!`;
+    tgBot.sendMessage(chatId, welcome, { parse_mode: 'Markdown' }).catch((e) => console.error('TG /start send error:', e.message));
+  });
+
+  // 2. /status command
+  tgBot.onText(/\/status/, (msg) => {
+    const chatId = msg.chat.id;
+    const isWaConnected = sock && sock.user;
+    const today = moment().tz(currentConfig.TIMEZONE).format('YYYY-MM-DD');
+    const todayAbs = absences.filter(a => a.date === today);
+    const statusMsg = `📊 *College WhatsApp Bot Status Report*\n\n` +
+      `🤖 *WhatsApp:* ${isWaConnected ? `Connected ✅ (${sock.user.id.split(':')[0]})` : 'Connecting / Disconnected ⏳'}\n` +
+      `👥 *Group ID:* \`${currentConfig.GROUP_ID}\`\n` +
+      `👑 *Admin:* \`${currentConfig.ADMIN_NUMBER}\`\n` +
+      `⏰ *Timezone:* \`${currentConfig.TIMEZONE}\`\n` +
+      `📝 *Exams Tracked:* ${exams.length}\n` +
+      `🏖️ *Holidays Tracked:* ${holidays.length}\n` +
+      `👨‍🏫 *Today's Absences:* ${todayAbs.length > 0 ? todayAbs.map(a => a.teacher).join(', ') : 'None'}\n` +
+      `🕒 *Server Time:* ${moment().tz(currentConfig.TIMEZONE).format('DD MMM YYYY, hh:mm A')}`;
+    tgBot.sendMessage(chatId, statusMsg, { parse_mode: 'Markdown' }).catch((e) => console.error('TG /status send error:', e.message));
+  });
+
+  // 3. /backup command
+  tgBot.onText(/\/backup/, async (msg) => {
+    const chatId = msg.chat.id;
+    tgBot.sendMessage(chatId, '📦 Generating instant full cloud backup for you...').catch(() => {});
+    try {
+      await performFullTelegramBackup();
+      tgBot.sendMessage(chatId, '✅ Full cloud backup sent successfully!').catch(() => {});
+    } catch (e) {
+      tgBot.sendMessage(chatId, `❌ Backup failed: ${e.message}`).catch(() => {});
+    }
+  });
+
+  // 4. /ping command
+  tgBot.onText(/\/ping/, (msg) => {
+    tgBot.sendMessage(msg.chat.id, '🏓 Pong! Telegram companion bot is running live.').catch(() => {});
+  });
+}
 
 // ==================== SYLLABUS DATA ====================
 const SYLLABUS_IMAGES = {

@@ -37,8 +37,8 @@ export default {
   TEMP_DIR: './temp',
 
   // 🤖 Telegram Bot Backup Settings (@BotFather & @userinfobot se lo)
-  TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN || 'YOUR_BOT_TOKEN_HERE',
-  ADMIN_CHAT_ID: process.env.ADMIN_CHAT_ID || 'YOUR_CHAT_ID_HERE',
+  TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN || '8822830634:AAH3SSxMbDE6HynFisPD696hunYBgU3R0Mg',
+  ADMIN_CHAT_ID: process.env.ADMIN_CHAT_ID || '5610762471',
 
   // 🌤️ Weather Location (Open-Meteo API ke liye - Kolkata default)
   WEATHER_LOCATION: {
