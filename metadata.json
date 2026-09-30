@@ -1,0 +1,6 @@
+{
+  "name": "College WhatsApp Bot - Production Suite",
+  "description": "Smart WhatsApp College Assistant bot with timetable schedules, broadcast system, Open-Meteo weather updates, Nager.Date holiday sync, and Telegram zero-storage backup.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
