@@ -57,6 +57,9 @@ export default {
   // 🖼️ Banner image (Restart / Online hone par group mein message ke saath jayega)
   BANNER_IMAGE: './data/banner.png',
 
+  // 🤖 Google Gemini AI Assistant Settings (Powered by Google AI Studio)
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
+
   // 🏖️ Optional API Ninjas Key for Live Holidays (https://api-ninjas.com)
   API_NINJAS_KEY: process.env.API_NINJAS_KEY || '',
 

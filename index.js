@@ -38,6 +38,7 @@ import QRCode from 'qrcode';
 import axios from 'axios';
 import TelegramBot from 'node-telegram-bot-api';
 import sharp from 'sharp';
+import { GoogleGenAI } from '@google/genai';
 import { fileURLToPath } from 'url';
 
 import CONFIG from './config.js';
@@ -406,6 +407,122 @@ function convertGpaToPercentage(inputStr) {
     division,
     gradeLetter
   };
+}
+
+// ==================== GOOGLE GEMINI AI ASSISTANT ====================
+let geminiClient = null;
+function getGeminiClient() {
+  const apiKey = currentConfig.GEMINI_API_KEY || CONFIG.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+  if (!apiKey) return null;
+  if (!geminiClient) {
+    geminiClient = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build'
+        }
+      }
+    });
+  }
+  return geminiClient;
+}
+
+async function askGeminiAI(prompt, studentName = '') {
+  const client = getGeminiClient();
+  if (!client) {
+    return '❌ Gemini API Key configure nahi hai! Kripya config.js ya .env file mein GEMINI_API_KEY check karein.';
+  }
+
+  const systemInstruction = `You are "Campus AI", the official academic and physics AI assistant for students of Dinhata College (Department of Physics, affiliated with Cooch Behar Panchanan Barma University - CBPBU).
+Your objectives:
+1. Help students solve Physics numericals, understand derivations, clarify lab experiments, explain quantum/classical concepts, optics, electronics, and python computation.
+2. Provide concise, accurate, step-by-step academic explanations.
+3. Language adaptability: Match the language of the student. If asked in Hindi or Hinglish, answer in clear, student-friendly Hinglish. If in English, answer in English. If in Bengali, answer in Bengali.
+4. Format cleanly using WhatsApp markdown (*bold* for keywords, \`code\` for formulas/units, bullet points for steps).
+5. Keep your tone encouraging, intellectual, and polite. Address the student warmly${studentName ? ` as ${studentName}` : ''}.
+6. Keep the response concise and mobile-friendly (typically within 150-250 words, unless a detailed step-by-step derivation or numerical solution is specifically requested).`;
+
+  const models = ['gemini-3.8-flash', 'gemini-3.1-flash-lite'];
+  for (const model of models) {
+    try {
+      const response = await client.models.generateContent({
+        model,
+        contents: prompt,
+        config: {
+          systemInstruction,
+          temperature: 0.7,
+        }
+      });
+      if (response && response.text) {
+        return response.text.trim();
+      }
+    } catch (err) {
+      console.warn(`⚠️ Gemini API error with model ${model}:`, err.message);
+    }
+  }
+
+  return '⚠️ AI Assistant abhi high demand par hai. Kripya kuch second baad dobara try karein!';
+}
+
+async function handleGeminiAIInteraction(sender, rawText, senderNumber, isAdmin, msg, isMention = false) {
+  try {
+    const limit = checkRateLimit(senderNumber, isAdmin);
+    if (limit.limited) {
+      if (sock && sock.user) {
+        await sock.sendMessage(sender, {
+          text: `⏳ Please wait ${limit.waitSeconds}s before asking another AI question.`
+        }, { quoted: msg });
+      }
+      return true;
+    }
+
+    // Strip mention tags like @919876543210 or @bot or commands !ai / !gemini / !ask
+    let query = rawText
+      .replace(/^!(ai|gemini|ask)\s*/i, '')
+      .replace(/@\d+/g, '')
+      .replace(/@bot\b/gi, '')
+      .trim();
+
+    if (!query) {
+      if (sock && sock.user) {
+        await sock.sendMessage(sender, {
+          text: `🤖 *CAMPUS AI ASSISTANT* (Powered by Gemini)\n━━━━━━━━━━━━━━━━━━━━━━━━━\n👋 Hi! Main Dinhata College Department of Physics ka AI Assistant hoon.\n\nMujhse koi bhi Physics doubt, formula, derivation, numerical, ya exam tips pucho!\n\n👉 *Usage:* \`!ai <Aapka Question>\`\n👉 *Example:* \`!ai Explain Newton's Rings central dark spot\`\n👉 Ya group mein mujhe tag karo: *@Bot Light polarization kya hota hai?*`
+        }, { quoted: msg });
+      }
+      return true;
+    }
+
+    // Find student name if registered
+    const student = students.find(s => s.sender === sender || s.sender === senderNumber);
+    const studentName = student ? student.name : '';
+
+    // Show WhatsApp typing indicator
+    try {
+      if (sock && sock.user) {
+        await sock.sendPresenceUpdate('composing', sender);
+      }
+    } catch (e) {}
+
+    const aiAnswer = await askGeminiAI(query, studentName);
+
+    if (sock && sock.user) {
+      await sock.sendMessage(sender, {
+        text: `🤖 *Campus AI:*\n\n${aiAnswer}\n\n━━━━━━━━━━━━━━━━━━━━━━━━━\n_Powered by Google Gemini • Dinhata College_`
+      }, { quoted: msg });
+    }
+
+    return true;
+  } catch (err) {
+    console.error('❌ Error handling Gemini AI interaction:', err);
+    try {
+      if (sock && sock.user) {
+        await sock.sendMessage(sender, {
+          text: `⚠️ AI response generation failed. Please try again!`
+        }, { quoted: msg });
+      }
+    } catch (e) {}
+    return true;
+  }
 }
 
 async function generateStudentIdCard({ name, roll, dept = 'Department of Physics', session = '2024 - 2028', college = 'Dinhata College' }) {
@@ -2464,6 +2581,7 @@ async function connectToWhatsApp() {
     try {
       const msg = m.messages[0];
       if (!msg.message) return;
+      if (msg.key.fromMe) return;
 
       const sender = msg.key.remoteJid;
       const isGroup = sender.endsWith('@g.us');
@@ -2478,9 +2596,33 @@ async function connectToWhatsApp() {
 
       const adminCheck = isAdminUser(senderNumber);
 
-      // Check if command is common to public & admin
-      const isHandled = await handleCommonCommands(sender, text, lowerText, adminCheck, senderNumber);
+      // Check if command is common to public & admin (includes !ai, !gemini, !ask)
+      const isHandled = await handleCommonCommands(sender, text, lowerText, adminCheck, senderNumber, msg);
       if (isHandled) return;
+
+      // Meta AI Style: Check Tag / Mention / Reply to Bot in group
+      const contextInfo = msg.message.extendedTextMessage?.contextInfo || {};
+      const mentionedJid = Array.isArray(contextInfo.mentionedJid) ? contextInfo.mentionedJid : [];
+      const quotedParticipant = contextInfo.participant || '';
+      const botJid = sock.user?.id ? sock.user.id.replace(/:.*@/, '@') : '';
+      const botNum = botJid ? botJid.split('@')[0] : '';
+
+      const isBotMentioned = isGroup && (
+        (botJid && mentionedJid.includes(botJid)) ||
+        (botNum && (text.includes('@' + botNum) || lowerText.includes('@bot'))) ||
+        (botJid && quotedParticipant === botJid)
+      );
+
+      if (isBotMentioned) {
+        await handleGeminiAIInteraction(sender, text, senderNumber, adminCheck, msg, true);
+        return;
+      }
+
+      // Check if in private DM (non-group) and user sent a conversational query
+      if (!isGroup && !lowerText.startsWith('!') && !adminCheck && text.trim().length > 1) {
+        await handleGeminiAIInteraction(sender, text, senderNumber, adminCheck, msg, false);
+        return;
+      }
 
       // Admin commands
       if (adminCheck) {
@@ -2506,8 +2648,14 @@ async function connectToWhatsApp() {
 /**
  * Public aur Admin dono ke liye commands (Code duplication hatane ke liye)
  */
-async function handleCommonCommands(sender, text, lowerText, isAdmin, senderNumber) {
+async function handleCommonCommands(sender, text, lowerText, isAdmin, senderNumber, msg = null) {
   try {
+    // 0. !ai / !gemini / !ask (Campus AI Assistant powered by Google Gemini)
+    if (lowerText.startsWith('!ai') || lowerText.startsWith('!gemini') || lowerText.startsWith('!ask')) {
+      await handleGeminiAIInteraction(sender, text, senderNumber, isAdmin, msg, false);
+      return true;
+    }
+
     // 1. !showschedule
     if (lowerText === '!showschedule') {
       const limit = checkRateLimit(senderNumber, isAdmin);
@@ -2692,6 +2840,8 @@ async function handleCommonCommands(sender, text, lowerText, isAdmin, senderNumb
         `• !nextholiday - Days left for next public holiday\n` +
         `• !publicholidays - All Indian public holidays\n\n` +
         `*🎓 Student Smart Features:*\n` +
+        `• !ai <question> - Ask Campus AI (Powered by Gemini)\n` +
+        `• Tag @Bot in group - Meta AI style instant question answer\n` +
         `• !mycard [Roll_No] - Official Digital ID Card Image (e.g. !mycard 25PHSM2107)\n` +
         `• !bunk <attended> <total> - Safe Bunk & 75% Attendance Calculator\n` +
         `• !gpa <SGPA> - University SGPA to Percentage & Division\n` +
