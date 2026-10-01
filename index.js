@@ -34,6 +34,7 @@ import moment from 'moment-timezone';
 import fs from 'fs';
 import path from 'path';
 import qrcode from 'qrcode-terminal';
+import QRCode from 'qrcode';
 import axios from 'axios';
 import TelegramBot from 'node-telegram-bot-api';
 import sharp from 'sharp';
@@ -335,73 +336,249 @@ function getRandomPhysicsFormula() {
   return PHYSICS_FORMULAS[Math.floor(Math.random() * PHYSICS_FORMULAS.length)];
 }
 
+const SCIENTIFIC_CONSTANTS = [
+  { name: 'Speed of Light in Vacuum', symbol: 'c', value: '2.99792458 × 10⁸ m/s', key: 'c', unit: 'm/s' },
+  { name: 'Planck Constant', symbol: 'h', value: '6.62607015 × 10⁻³⁴ J·s', key: 'h', unit: 'J·s' },
+  { name: 'Reduced Planck Constant (Dirac)', symbol: 'ħ', value: '1.054571817 × 10⁻³⁴ J·s', key: 'hbar', unit: 'J·s' },
+  { name: 'Universal Gravitational Constant', symbol: 'G', value: '6.67430 × 10⁻¹¹ N·m²/kg²', key: 'g', unit: 'N·m²/kg²' },
+  { name: 'Elementary Electric Charge', symbol: 'e', value: '1.602176634 × 10⁻¹⁹ C', key: 'e', unit: 'C' },
+  { name: 'Electron Rest Mass', symbol: 'mₑ', value: '9.1093837 × 10⁻³¹ kg (0.510998 MeV/c²)', key: 'me', unit: 'kg' },
+  { name: 'Proton Rest Mass', symbol: 'mₚ', value: '1.6726219 × 10⁻²⁷ kg (938.272 MeV/c²)', key: 'mp', unit: 'kg' },
+  { name: 'Neutron Rest Mass', symbol: 'mₙ', value: '1.6749275 × 10⁻²⁷ kg (939.565 MeV/c²)', key: 'mn', unit: 'kg' },
+  { name: 'Boltzmann Constant', symbol: 'k_B', value: '1.380649 × 10⁻²³ J/K', key: 'kb', unit: 'J/K' },
+  { name: 'Avogadro Constant', symbol: 'N_A', value: '6.02214076 × 10²³ mol⁻¹', key: 'na', unit: 'mol⁻¹' },
+  { name: 'Universal Gas Constant', symbol: 'R', value: '8.314462618 J/(mol·K)', key: 'r', unit: 'J/(mol·K)' },
+  { name: 'Permittivity of Free Space (Vacuum)', symbol: 'ε₀', value: '8.8541878 × 10⁻¹² F/m', key: 'eps0', unit: 'F/m' },
+  { name: 'Permeability of Free Space (Vacuum)', symbol: 'μ₀', value: '1.256637 × 10⁻⁶ N/A² (4π × 10⁻⁷ H/m)', key: 'mu0', unit: 'H/m' },
+  { name: 'Stefan-Boltzmann Constant', symbol: 'σ', value: '5.670374 × 10⁻⁸ W/(m²·K⁴)', key: 'sigma', unit: 'W/(m²·K⁴)' },
+  { name: 'Rydberg Constant', symbol: 'R_∞', value: '1.0973731568 × 10⁷ m⁻¹', key: 'rydberg', unit: 'm⁻¹' },
+  { name: 'Bohr Radius', symbol: 'a₀', value: '5.291772 × 10⁻¹¹ m (0.529 Å)', key: 'a0', unit: 'm' }
+];
+
+function calculateAttendanceBunk(attended, total, targetPct = 75) {
+  if (total <= 0) return { error: 'Total classes 0 se zyada honi chahiye!' };
+  if (attended > total) return { error: 'Attended classes total classes se zyada nahi ho sakti!' };
+  const currentPct = (attended / total) * 100;
+  const targetFrac = targetPct / 100;
+
+  if (currentPct >= targetPct) {
+    const safeBunks = Math.floor((attended / targetFrac) - total);
+    return {
+      currentPct: currentPct.toFixed(1),
+      status: 'SAFE',
+      safeBunks,
+      message: safeBunks > 0 
+        ? `🎉 *Chill Zone!* Aap agle *${safeBunks} classes* safely bunk/miss kar sakte ho aur attendance 75% se upar rahegi!`
+        : `⚠️ *Borderline Zone!* Aapki attendance exactly 75% par hai. Abhi ek bhi class miss mat karna!`
+    };
+  } else {
+    const needed = Math.ceil((targetFrac * total - attended) / (1 - targetFrac));
+    return {
+      currentPct: currentPct.toFixed(1),
+      status: 'SHORTAGE',
+      neededClasses: needed,
+      message: `🚨 *Defaulter / Shortage Alert!*\nAapki attendance abhi *${currentPct.toFixed(1)}%* hai (75% se kam).\nAapko agle lagataar *${needed} classes* attend karni padengi (bina koi miss kiye) taaki 75% criteria pura ho sake!`
+    };
+  }
+}
+
+function convertGpaToPercentage(inputStr) {
+  const nums = inputStr.split(/[\s,]+/).map(n => parseFloat(n)).filter(n => !isNaN(n) && n >= 0 && n <= 10);
+  if (nums.length === 0) return null;
+  const avg = nums.reduce((a, b) => a + b, 0) / nums.length;
+  // UGC & WB University Formula: (SGPA - 0.75) * 10
+  // Alternative AICTE standard: SGPA * 9.5
+  const pctUgc = Math.max(0, (avg - 0.75) * 10).toFixed(2);
+  const pct95 = (avg * 9.5).toFixed(2);
+  let division = 'Pass Division';
+  let gradeLetter = 'P';
+  if (avg >= 9.0) { division = '🌟 First Class with Exemplary (Outstanding)'; gradeLetter = 'O'; }
+  else if (avg >= 8.0) { division = '🥇 First Class with Distinction'; gradeLetter = 'A+'; }
+  else if (avg >= 7.0) { division = '🥈 First Class'; gradeLetter = 'A'; }
+  else if (avg >= 6.0) { division = '🥉 High Second Class'; gradeLetter = 'B+'; }
+  else if (avg >= 5.0) { division = 'Second Class'; gradeLetter = 'B'; }
+
+  return {
+    avg: avg.toFixed(2),
+    count: nums.length,
+    pctUgc,
+    pct95,
+    division,
+    gradeLetter
+  };
+}
+
 async function generateStudentIdCard({ name, roll, dept = 'Department of Physics', session = '2024 - 2028', college = 'Dinhata College' }) {
   const safeName = String(name || 'College Student').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const safeRoll = String(roll || '2024PHY001').toUpperCase();
+  const safeRoll = String(roll || '25PHSM2107').toUpperCase();
+  const safeDept = String(dept || 'Department of Physics').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const safeCollege = String(college || 'Dinhata College').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const hash = 'DHC-' + Buffer.from(safeRoll + 'PASS').toString('hex').slice(0, 8).toUpperCase();
   const issueDate = moment().tz(CONFIG.TIMEZONE).format('DD MMM YYYY');
 
-  const svg = `<svg width="800" height="500" viewBox="0 0 800 500" xmlns="http://www.w3.org/2000/svg">
-    <defs>
-      <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="#090d16"/>
-        <stop offset="50%" stop-color="#111827"/>
-        <stop offset="100%" stop-color="#0f172a"/>
-      </linearGradient>
-      <linearGradient id="headerGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-        <stop offset="0%" stop-color="#1e3a8a"/>
-        <stop offset="100%" stop-color="#0284c7"/>
-      </linearGradient>
-      <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-        <stop offset="0%" stop-color="#38bdf8"/>
-        <stop offset="100%" stop-color="#818cf8"/>
-      </linearGradient>
-      <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="#fbbf24"/>
-        <stop offset="100%" stop-color="#d97706"/>
-      </linearGradient>
-      <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
-        <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.7"/>
-      </filter>
-    </defs>
+  const svg = `<svg width="900" height="560" viewBox="0 0 900 560" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#050814"/>
+      <stop offset="45%" stop-color="#0b1120"/>
+      <stop offset="85%" stop-color="#020617"/>
+      <stop offset="100%" stop-color="#0a0818"/>
+    </linearGradient>
+    <linearGradient id="cyberBorder" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00f0ff"/>
+      <stop offset="30%" stop-color="#3b82f6"/>
+      <stop offset="70%" stop-color="#a855f7"/>
+      <stop offset="100%" stop-color="#ec4899"/>
+    </linearGradient>
+    <linearGradient id="chipGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="50%" stop-color="#d97706"/>
+      <stop offset="100%" stop-color="#b45309"/>
+    </linearGradient>
+    <linearGradient id="holoFoil" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="rgba(0, 240, 255, 0.8)"/>
+      <stop offset="25%" stop-color="rgba(168, 85, 247, 0.8)"/>
+      <stop offset="50%" stop-color="rgba(236, 72, 153, 0.8)"/>
+      <stop offset="75%" stop-color="rgba(59, 130, 246, 0.8)"/>
+      <stop offset="100%" stop-color="rgba(16, 185, 129, 0.8)"/>
+    </linearGradient>
+    <filter id="cardShadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#000000" flood-opacity="0.9"/>
+    </filter>
+  </defs>
 
-    <rect width="800" height="500" fill="#020617"/>
-    <rect x="25" y="25" width="750" height="450" rx="24" fill="url(#bgGrad)" stroke="#334155" stroke-width="3" filter="url(#shadow)"/>
-    <path d="M 25 49 C 25 35 35 25 49 25 L 751 25 C 765 25 775 35 775 49 L 775 125 L 25 125 Z" fill="url(#headerGrad)"/>
-    <line x1="25" y1="125" x2="775" y2="125" stroke="url(#accentGrad)" stroke-width="3"/>
+  <rect width="900" height="560" fill="#02040a"/>
+  <rect x="20" y="20" width="860" height="520" rx="26" fill="url(#bgGrad)" stroke="url(#cyberBorder)" stroke-width="2.5" filter="url(#cardShadow)"/>
+  <path d="M 46 22 L 854 22" stroke="url(#holoFoil)" stroke-width="3.5" stroke-linecap="round"/>
 
-    <text x="400" y="68" fill="#ffffff" font-family="Arial, sans-serif" font-size="28" font-weight="900" letter-spacing="2" text-anchor="middle">${college.toUpperCase()}</text>
-    <text x="400" y="100" fill="#93c5fd" font-family="Arial, sans-serif" font-size="16" font-weight="600" letter-spacing="1.5" text-anchor="middle">${dept.toUpperCase()}</text>
+  <!-- Watermark: Stylized Physics Atom Orbit Lines -->
+  <g opacity="0.08" stroke="#38bdf8" stroke-width="2" fill="none" transform="translate(740, 280)">
+    <circle r="120"/>
+    <ellipse rx="140" ry="50" transform="rotate(30)"/>
+    <ellipse rx="140" ry="50" transform="rotate(-30)"/>
+    <ellipse rx="140" ry="50" transform="rotate(90)"/>
+    <circle r="15" fill="#38bdf8"/>
+  </g>
 
-    <rect x="65" y="165" width="160" height="200" rx="16" fill="#0f172a" stroke="#38bdf8" stroke-width="2"/>
-    <circle cx="145" cy="235" r="45" fill="#1e293b" stroke="#64748b" stroke-width="2"/>
-    <path d="M 120 220 L 145 200 L 170 220 L 145 235 Z" fill="#38bdf8"/>
-    <path d="M 132 230 C 132 245 158 245 158 230" fill="none" stroke="#38bdf8" stroke-width="2"/>
-    <path d="M 95 330 C 95 295 195 295 195 330 Z" fill="#1e293b"/>
-    <rect x="85" y="380" width="120" height="28" rx="14" fill="#065f46" stroke="#10b981" stroke-width="1.5"/>
-    <text x="145" y="399" fill="#a7f3d0" font-family="Arial, sans-serif" font-size="12" font-weight="bold" text-anchor="middle">VERIFIED</text>
+  <!-- Header Section -->
+  <g transform="translate(60, 48)">
+    <rect x="0" y="0" width="210" height="22" rx="11" fill="rgba(56, 189, 248, 0.12)" stroke="rgba(56, 189, 248, 0.4)" stroke-width="1"/>
+    <circle cx="12" cy="11" r="4" fill="#10b981"/>
+    <text x="24" y="15" fill="#38bdf8" font-family="Arial, sans-serif" font-size="10" font-weight="900" letter-spacing="1.5">ACTIVE STUDENT PASS</text>
+    <text x="0" y="52" fill="#ffffff" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="900" letter-spacing="1">${safeCollege.toUpperCase()}</text>
+    <text x="0" y="74" fill="#94a3b8" font-family="Arial, sans-serif" font-size="13" font-weight="600" letter-spacing="1.5">${safeDept.toUpperCase()} • CBPBU AFFILIATED</text>
+  </g>
 
-    <text x="265" y="185" fill="#94a3b8" font-family="Arial, sans-serif" font-size="14" font-weight="bold">STUDENT NAME</text>
-    <text x="265" y="218" fill="#f8fafc" font-family="Arial, sans-serif" font-size="26" font-weight="bold">${safeName}</text>
+  <!-- Smart EMV Gold Cyber Chip Graphic -->
+  <g transform="translate(740, 52)">
+    <rect x="0" y="0" width="64" height="48" rx="8" fill="url(#chipGrad)" stroke="#f59e0b" stroke-width="1.5"/>
+    <line x1="0" y1="16" x2="64" y2="16" stroke="#78350f" stroke-width="1"/>
+    <line x1="0" y1="32" x2="64" y2="32" stroke="#78350f" stroke-width="1"/>
+    <line x1="22" y1="0" x2="22" y2="48" stroke="#78350f" stroke-width="1"/>
+    <line x1="42" y1="0" x2="42" y2="48" stroke="#78350f" stroke-width="1"/>
+    <rect x="22" y="16" width="20" height="16" rx="4" fill="none" stroke="#78350f" stroke-width="1.5"/>
+  </g>
 
-    <text x="265" y="260" fill="#94a3b8" font-family="Arial, sans-serif" font-size="13" font-weight="bold">COLLEGE ROLL NUMBER</text>
-    <rect x="265" y="272" width="230" height="38" rx="8" fill="#1e293b" stroke="#475569" stroke-width="1.5"/>
-    <text x="280" y="298" fill="#38bdf8" font-family="monospace, Arial" font-size="20" font-weight="bold" letter-spacing="2">${safeRoll}</text>
+  <!-- Left: Futuristic Avatar Container -->
+  <g transform="translate(60, 160)">
+    <rect x="0" y="0" width="160" height="195" rx="20" fill="rgba(15, 23, 42, 0.7)" stroke="rgba(56, 189, 248, 0.4)" stroke-width="1.5"/>
+    <circle cx="80" cy="75" r="46" fill="#090d16" stroke="url(#cyberBorder)" stroke-width="2.5"/>
+    <circle cx="80" cy="62" r="18" fill="#38bdf8" opacity="0.85"/>
+    <path d="M 48 108 C 48 88 112 88 112 108 Z" fill="#38bdf8" opacity="0.85"/>
 
-    <text x="525" y="260" fill="#94a3b8" font-family="Arial, sans-serif" font-size="13" font-weight="bold">ACADEMIC SESSION</text>
-    <rect x="525" y="272" width="200" height="38" rx="8" fill="#1e293b" stroke="#475569" stroke-width="1.5"/>
-    <text x="540" y="298" fill="#f8fafc" font-family="monospace, Arial" font-size="18" font-weight="bold">${session}</text>
+    <g transform="translate(35, 138)" stroke="#00f0ff" stroke-width="2" stroke-linecap="round" opacity="0.7">
+      <line x1="0" y1="10" x2="0" y2="0"/>
+      <line x1="8" y1="14" x2="8" y2="-4"/>
+      <line x1="16" y1="8" x2="16" y2="2"/>
+      <line x1="24" y1="16" x2="24" y2="-6"/>
+      <line x1="32" y1="12" x2="32" y2="-2"/>
+      <line x1="40" y1="18" x2="40" y2="-8"/>
+      <line x1="48" y1="10" x2="48" y2="0"/>
+      <line x1="56" y1="15" x2="56" y2="-5"/>
+      <line x1="64" y1="8" x2="64" y2="2"/>
+      <line x1="72" y1="16" x2="72" y2="-6"/>
+      <line x1="80" y1="12" x2="80" y2="-2"/>
+      <line x1="88" y1="9" x2="88" y2="1"/>
+    </g>
 
-    <text x="265" y="340" fill="#94a3b8" font-family="Arial, sans-serif" font-size="13" font-weight="bold">COURSE / PROGRAM</text>
-    <text x="265" y="365" fill="#f8fafc" font-family="Arial, sans-serif" font-size="16" font-weight="bold">B.Sc 4-Year Major in Physics (NEP)</text>
+    <rect x="18" y="160" width="124" height="24" rx="12" fill="rgba(16, 185, 129, 0.15)" stroke="#10b981" stroke-width="1.2"/>
+    <text x="80" y="176" fill="#34d399" font-family="Arial, sans-serif" font-size="10" font-weight="bold" letter-spacing="1.5" text-anchor="middle">VERIFIED IDENTITY</text>
+  </g>
 
-    <line x1="265" y1="390" x2="725" y2="390" stroke="#334155" stroke-width="1.5"/>
+  <!-- Right: Student Details -->
+  <g transform="translate(250, 160)">
+    <text x="0" y="14" fill="#64748b" font-family="Arial, sans-serif" font-size="11" font-weight="800" letter-spacing="2">STUDENT NAME</text>
+    <text x="0" y="46" fill="#f8fafc" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="900" letter-spacing="0.5">${safeName}</text>
 
-    <text x="265" y="422" fill="#64748b" font-family="Arial, sans-serif" font-size="12">ISSUED: ${issueDate}</text>
-    <text x="450" y="422" fill="#64748b" font-family="monospace" font-size="12">PASS HASH: #${hash}</text>
-    <circle cx="700" cy="425" r="24" fill="url(#goldGrad)" opacity="0.9"/>
-    <text x="700" y="430" fill="#000000" font-family="Arial" font-size="10" font-weight="900" text-anchor="middle">OFFICIAL</text>
-  </svg>`;
+    <!-- Roll Box (Glowing Cyber Monospace) -->
+    <g transform="translate(0, 70)">
+      <text x="0" y="0" fill="#64748b" font-family="Arial, sans-serif" font-size="11" font-weight="800" letter-spacing="2">COLLEGE ROLL NUMBER</text>
+      <rect x="0" y="10" width="260" height="46" rx="12" fill="rgba(8, 145, 178, 0.12)" stroke="#06b6d4" stroke-width="1.5"/>
+      <text x="16" y="40" fill="#22d3ee" font-family="monospace, Courier" font-size="22" font-weight="bold" letter-spacing="3">${safeRoll}</text>
+    </g>
+
+    <!-- Academic Session Box -->
+    <g transform="translate(285, 70)">
+      <text x="0" y="0" fill="#64748b" font-family="Arial, sans-serif" font-size="11" font-weight="800" letter-spacing="2">SESSION BATCH</text>
+      <rect x="0" y="10" width="210" height="46" rx="12" fill="rgba(15, 23, 42, 0.8)" stroke="rgba(148, 163, 184, 0.3)" stroke-width="1.2"/>
+      <text x="18" y="40" fill="#e2e8f0" font-family="monospace, Courier" font-size="18" font-weight="bold" letter-spacing="2">${session}</text>
+    </g>
+
+    <!-- Program / Curriculum -->
+    <g transform="translate(0, 155)">
+      <text x="0" y="0" fill="#64748b" font-family="Arial, sans-serif" font-size="11" font-weight="800" letter-spacing="2">COURSE &amp; CURRICULUM</text>
+      <text x="0" y="22" fill="#cbd5e1" font-family="Arial, sans-serif" font-size="15" font-weight="700">B.Sc 4-Year Major in Physics (NEP-2020 Framework)</text>
+    </g>
+  </g>
+
+  <!-- Divider Line -->
+  <line x1="60" y1="440" x2="840" y2="440" stroke="rgba(51, 65, 85, 0.8)" stroke-width="1.5"/>
+
+  <!-- Footer Section: Barcode + Security Hash + Official Seal -->
+  <g transform="translate(60, 460)">
+    <g fill="#94a3b8">
+      <rect x="0" y="0" width="3" height="36"/>
+      <rect x="6" y="0" width="1.5" height="36"/>
+      <rect x="10" y="0" width="4" height="36"/>
+      <rect x="17" y="0" width="2" height="36"/>
+      <rect x="22" y="0" width="5" height="36"/>
+      <rect x="30" y="0" width="1.5" height="36"/>
+      <rect x="34" y="0" width="3" height="36"/>
+      <rect x="40" y="0" width="1.5" height="36"/>
+      <rect x="44" y="0" width="4" height="36"/>
+      <rect x="51" y="0" width="2" height="36"/>
+      <rect x="56" y="0" width="5" height="36"/>
+      <rect x="64" y="0" width="1.5" height="36"/>
+      <rect x="68" y="0" width="3" height="36"/>
+      <rect x="74" y="0" width="2" height="36"/>
+      <rect x="79" y="0" width="4" height="36"/>
+      <rect x="86" y="0" width="1.5" height="36"/>
+      <rect x="90" y="0" width="5" height="36"/>
+      <rect x="98" y="0" width="2" height="36"/>
+      <rect x="103" y="0" width="3" height="36"/>
+      <rect x="109" y="0" width="1.5" height="36"/>
+      <rect x="113" y="0" width="4" height="36"/>
+      <rect x="120" y="0" width="2" height="36"/>
+      <rect x="125" y="0" width="5" height="36"/>
+      <rect x="133" y="0" width="1.5" height="36"/>
+      <rect x="137" y="0" width="3" height="36"/>
+      <rect x="143" y="0" width="2" height="36"/>
+      <rect x="148" y="0" width="4" height="36"/>
+      <rect x="155" y="0" width="1.5" height="36"/>
+      <rect x="160" y="0" width="3" height="36"/>
+    </g>
+    <text x="0" y="52" fill="#64748b" font-family="monospace" font-size="10" letter-spacing="2">${hash}</text>
+
+    <text x="250" y="22" fill="#64748b" font-family="Arial, sans-serif" font-size="11" font-weight="bold">ISSUED: <tspan fill="#94a3b8">${issueDate}</tspan></text>
+    <text x="250" y="42" fill="#64748b" font-family="Arial, sans-serif" font-size="11" font-weight="bold">DIGITAL PASS ID: <tspan fill="#38bdf8">#${hash}</tspan></text>
+
+    <g transform="translate(660, 5)">
+      <rect x="0" y="0" width="120" height="38" rx="8" fill="rgba(139, 92, 246, 0.15)" stroke="url(#cyberBorder)" stroke-width="1.5"/>
+      <text x="60" y="18" fill="#c084fc" font-family="Arial, sans-serif" font-size="9" font-weight="900" letter-spacing="1.5" text-anchor="middle">AUTHENTICATED</text>
+      <text x="60" y="30" fill="#a855f7" font-family="monospace" font-size="8" font-weight="bold" text-anchor="middle">DINHATA-COLLEGE</text>
+    </g>
+  </g>
+</svg>`;
 
   return await sharp(Buffer.from(svg)).png().toBuffer();
 }
@@ -430,7 +607,7 @@ if (tgBot) {
     return { limited: false };
   };
 
-  const isValidRoll = (roll) => /^\d{4}(PHY|CHE|MAT|BOT|ZOO|[A-Z]{2,4})\d{3}$/i.test(roll.trim());
+  const isValidRoll = (roll) => /^(\d{2}|\d{4})[A-Z]{2,5}\d{3,5}$/i.test(String(roll).trim());
 
   const sendTgAuthRequired = async (chatId) => {
     await tgBot.sendMessage(
@@ -547,7 +724,7 @@ if (tgBot) {
           chatId,
           `✅ Welcome *${text}*!\n\n` +
           `Ab apna roll number bhejo.\n` +
-          `*Format:* 2024PHY001`,
+          `*Format:* \`25PHSM2107\` (Example: 25PHSM2107)`,
           { parse_mode: 'Markdown' }
         );
       } else {
@@ -569,8 +746,8 @@ if (tgBot) {
       if (!isValidRoll(roll)) {
         return tgBot.sendMessage(
           chatId,
-          `❌ *Galat format!*\n` +
-          `Sahi format: \`2024PHY001\` (YYYY + DEPT + NUMBER)`,
+          `❌ *Galat roll number format!*\n` +
+          `Sahi format bhejein: \`25PHSM2107\` (Example: Year + Department + Roll)`,
           { parse_mode: 'Markdown' }
         );
       }
@@ -779,23 +956,34 @@ if (tgBot) {
     const isAppr = isTgApproved(chatId);
 
     let text = `📖 *College Bot Command Guide*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-    text += `*🌐 Public Commands:*\n` +
+    text += `*🌐 Public / Student Commands:*\n` +
       `• /start — Welcome & registration\n` +
       `• /help — Show all commands\n` +
-      `• /public — College public info\n` +
+      `• /mycard [Roll_No] — Official Digital Student ID Card Image\n` +
+      `• /bunk <attended> <total> — Safe Bunk & 75% Attendance Calculator\n` +
+      `• /gpa <SGPA> — University SGPA to Percentage Converter\n` +
+      `• /qr <link/text> — Instant HD QR Code Generator\n` +
+      `• /const [symbol] — Physics Scientific Constants (c, h, G, e, me)\n` +
+      `• /formula — Physics formula of the day\n` +
+      `• /deadlines — Assignment & lab countdown\n` +
+      `• /examdays — Semester examination countdown\n` +
+      `• /fees — Semester fees & portal link\n` +
+      `• /circulars — Official notices & circulars\n` +
+      `• /public — College campus & department info\n` +
       `• /syllabus — Course syllabus options\n` +
       `• /timetable — General routine overview\n` +
       `• /holidays — Full holiday calendar\n` +
       `• /nextholiday — Next upcoming holiday\n\n`;
 
     if (isAppr) {
-      text += `*🎓 Student Commands (Approved):*\n` +
+      text += `*🎓 Approved Student Tools:*\n` +
         `• /myprofile — Apna profile & roll info\n` +
         `• /myattendance — Live attendance % & visual bar\n` +
         `• /mytimetable — Personal routine\n` +
         `• /myexams — Upcoming exam schedule\n` +
-        `• /quiz — Interactive Physics Quiz\n` +
-        `• /doubt [question] — Ask doubt to Admin directly\n` +
+        `• /quiz — Interactive Physics Quiz Challenge\n` +
+        `• /leaderboard — Top quiz masters\n` +
+        `• /doubt [question] — Ask doubt to Admin/CR directly\n` +
         `• /report — Complete academic summary card\n` +
         `• /notes — View study notes & PDFs\n` +
         `• /download [id] — Download note PDF\n\n`;
@@ -1488,27 +1676,182 @@ if (tgBot) {
   });
 
   // /mycard on Telegram (Sends Digital Student ID Card Image)
-  tgBot.onText(/\/mycard/, async (msg) => {
+  tgBot.onText(/\/mycard(?:\s+(.+))?/, async (msg, match) => {
     const chatId = String(msg.chat.id);
     const student = users.linked[chatId];
-    const sName = student ? student.name : (msg.from.first_name || 'Student');
-    const sRoll = student ? student.roll_no : '2024PHY001';
-    await tgBot.sendMessage(chatId, '🎨 Generating your official Digital Student ID Card image...');
+    const arg = match && match[1] ? match[1].trim() : '';
+    let sRoll = '';
+    let sName = '';
+
+    if (arg) {
+      const parts = arg.split(/\s+/);
+      const candidateRoll = parts[0].toUpperCase();
+      if (isValidRoll(candidateRoll)) {
+        sRoll = candidateRoll;
+        sName = parts.slice(1).join(' ').trim() || (student ? student.name : msg.from.first_name || 'Physics Student');
+      } else {
+        return tgBot.sendMessage(
+          chatId,
+          `❌ *Invalid Roll Number Format!*\nSahi college format bhejo: \`25PHSM2107\`\n\n👉 *Usage:* \`/mycard 25PHSM2107 [Aapka Naam]\``,
+          { parse_mode: 'Markdown' }
+        );
+      }
+    }
+
+    if (!sRoll && student && student.roll_no) {
+      sRoll = student.roll_no.toUpperCase();
+      sName = student.name;
+    }
+
+    if (!sRoll) {
+      return tgBot.sendMessage(
+        chatId,
+        `⚠️ *Roll Number Required!*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nID Card generate karne ke liye pehle apna Roll Number batayein.\n\n👉 *Direct Card mangwayein:*\n\`/mycard 25PHSM2107\`\n(ya \`/mycard 25PHSM2107 Rahul Dey\`)\n\n👉 *Ya pehle profile register karein:*\n\`/start\` dabayein aur apna name & roll number link karein!\n━━━━━━━━━━━━━━━━━━━━━━━━━\n_Format: 25PHSM2107_`,
+        { parse_mode: 'Markdown' }
+      );
+    }
+
+    await tgBot.sendMessage(chatId, `🎨 Generating official Digital Student ID Card for *${sRoll}*...`);
     try {
       const pngBuffer = await generateStudentIdCard({
-        name: sName,
+        name: sName || (msg.from.first_name || 'Physics Student'),
         roll: sRoll,
         dept: CONFIG.DEPARTMENT || 'Department of Physics',
         college: CONFIG.COLLEGE_NAME || 'Dinhata College',
         session: '2024 - 2028'
       });
       await tgBot.sendPhoto(chatId, pngBuffer, {
-        caption: `🪪 *OFFICIAL DIGITAL STUDENT ID CARD*\n\n👤 *Name:* ${sName}\n🎓 *Roll No:* \`${sRoll}\`\n🛡️ *Verification:* Official Active Pass ✅`,
+        caption: `🪪 *OFFICIAL DIGITAL STUDENT ID CARD*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n👤 *Name:* ${sName || (msg.from.first_name || 'Student')}\n🎓 *Roll No:* \`${sRoll}\`\n🏛️ *College:* ${CONFIG.COLLEGE_NAME || 'Dinhata College'}\n🔬 *Department:* Physics\n🛡️ *Verification:* Official Active Pass ✅`,
         parse_mode: 'Markdown'
       });
     } catch (err) {
       await tgBot.sendMessage(chatId, `❌ Failed to render card: ${err.message}`);
     }
+  });
+
+  // /bunk on Telegram (Attendance Safe Bunk & 75% Criteria Calculator)
+  tgBot.onText(/\/bunk(?:\s+(\d+)\s+(\d+))?/, async (msg, match) => {
+    const chatId = String(msg.chat.id);
+    if (!match || !match[1] || !match[2]) {
+      return tgBot.sendMessage(
+        chatId,
+        `🎯 *ATTENDANCE SAFE BUNK CALCULATOR (75% Rule)*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nJaniye kitni classes safely miss kar sakte hain ya kitni attend karni padengi!\n\n👉 *Usage:* \`/bunk <Attended> <Total>\`\n👉 *Example:* \`/bunk 18 24\` (18 attend kiye out of 24)\n👉 *Example:* \`/bunk 12 20\`\n━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        { parse_mode: 'Markdown' }
+      );
+    }
+    const attended = parseInt(match[1], 10);
+    const total = parseInt(match[2], 10);
+    const res = calculateAttendanceBunk(attended, total, 75);
+    if (res.error) {
+      return tgBot.sendMessage(chatId, `❌ ${res.error}`);
+    }
+    const responseText = `📊 *ATTENDANCE ANALYSIS (75% CRITERIA)*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `✅ *Classes Attended:* ${attended} / ${total}\n` +
+      `📈 *Current Percentage:* *${res.currentPct}%*\n` +
+      `🎯 *Mandatory Target:* 75.0%\n\n` +
+      `${res.message}\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━\n_Department of Physics, Dinhata College_`;
+    await tgBot.sendMessage(chatId, responseText, { parse_mode: 'Markdown' });
+  });
+
+  // /gpa on Telegram (SGPA to Percentage Converter)
+  tgBot.onText(/\/gpa(?:\s+(.+))?/, async (msg, match) => {
+    const chatId = String(msg.chat.id);
+    const arg = match && match[1] ? match[1].trim() : '';
+    if (!arg) {
+      return tgBot.sendMessage(
+        chatId,
+        `🧮 *UNIVERSITY SGPA/CGPA TO PERCENTAGE CONVERTER*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n👉 *Single Semester:* \`/gpa 8.4\`\n👉 *Multi Semester Average:* \`/gpa 8.2 7.9 8.5 8.1\`\n━━━━━━━━━━━━━━━━━━━━━━━━━\n_Formula: (SGPA - 0.75) * 10 (University / UGC Standard)_`,
+        { parse_mode: 'Markdown' }
+      );
+    }
+    const res = convertGpaToPercentage(arg);
+    if (!res) {
+      return tgBot.sendMessage(chatId, `❌ Please provide valid numbers between 0 and 10! Example: \`/gpa 8.2\``);
+    }
+    const responseText = `🎓 *ACADEMIC GRADE & PERCENTAGE REPORT*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `📊 *Calculated SGPA/CGPA:* *${res.avg}* (from ${res.count} input${res.count > 1 ? 's' : ''})\n` +
+      `🎖️ *Letter Grade:* *${res.gradeLetter}*\n` +
+      `🏆 *Academic Division:* *${res.division}*\n\n` +
+      `📈 *Equivalent Marks:* *${res.pctUgc}%*\n` +
+      `_Formula: (SGPA - 0.75) × 10 (State University / UGC)_\n` +
+      `📐 *Secondary Scale:* ${res.pct95}% (at 9.5x scale)\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━\n_Dinhata College Examination Wing_`;
+    await tgBot.sendMessage(chatId, responseText, { parse_mode: 'Markdown' });
+  });
+
+  // /qr on Telegram (Instant QR Code Generator)
+  tgBot.onText(/\/qr(?:\s+(.+))?/, async (msg, match) => {
+    const chatId = String(msg.chat.id);
+    const content = match && match[1] ? match[1].trim() : '';
+    if (!content) {
+      return tgBot.sendMessage(
+        chatId,
+        `🔲 *INSTANT QR CODE GENERATOR*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nApne drive notes, Google form, ya link ka QR code banayein!\n\n👉 *Usage:* \`/qr <Link ya Text>\`\n👉 *Example:* \`/qr https://dinhata-college.ac.in\``,
+        { parse_mode: 'Markdown' }
+      );
+    }
+    await tgBot.sendMessage(chatId, '⚙️ Generating HD QR Code image...');
+    try {
+      const qrBuf = await QRCode.toBuffer(content, {
+        width: 600,
+        margin: 2,
+        color: { dark: '#0f172a', light: '#ffffff' }
+      });
+      await tgBot.sendPhoto(chatId, qrBuf, {
+        caption: `🔲 *INSTANT QR CODE GENERATED*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n🔗 *Content:* \`${content}\`\n\n📱 Kisi bhi smartphone camera se scan karein!`,
+        parse_mode: 'Markdown'
+      });
+    } catch (err) {
+      await tgBot.sendMessage(chatId, `❌ QR code generation failed: ${err.message}`);
+    }
+  });
+
+  // /const on Telegram (Physics Scientific Constants)
+  tgBot.onText(/\/const(?:\s+(.+))?/, async (msg, match) => {
+    const chatId = String(msg.chat.id);
+    const query = match && match[1] ? match[1].trim().toLowerCase() : '';
+    if (query) {
+      const matched = SCIENTIFIC_CONSTANTS.filter(c => 
+        c.key === query || c.symbol.toLowerCase() === query || c.name.toLowerCase().includes(query)
+      );
+      if (matched.length === 0) {
+        return tgBot.sendMessage(chatId, `❌ Constant '${query}' nahi mila! Sirf \`/const\` likhkar poori list dekhein.`);
+      }
+      let text = `🔬 *PHYSICS CONSTANT LOOKUP*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+      matched.forEach(c => {
+        text += `⚛️ *${c.name}* (\`${c.symbol}\`)\n` +
+          `   Value: *${c.value}*\n` +
+          `   SI Unit: \`${c.unit}\`\n\n`;
+      });
+      return tgBot.sendMessage(chatId, text.trim(), { parse_mode: 'Markdown' });
+    }
+
+    let text = `🔬 *ESSENTIAL PHYSICAL CONSTANTS TABLE*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+    SCIENTIFIC_CONSTANTS.slice(0, 10).forEach(c => {
+      text += `• *${c.name}* (\`${c.symbol}\`): \`${c.value}\`\n`;
+    });
+    text += `\n━━━━━━━━━━━━━━━━━━━━━━━━━\n_Specific search ke liye: \`/const c\`, \`/const h\`, \`/const me\`_`;
+    await tgBot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
+  });
+
+  // /examdays on Telegram (Semester Exam Countdown)
+  tgBot.onText(/\/examdays/, async (msg) => {
+    const chatId = String(msg.chat.id);
+    const now = moment().tz(CONFIG.TIMEZONE);
+    // Typical Even Semester Final exam timeline (e.g. 15 Nov 2026)
+    const targetDate = moment.tz('15-11-2026 10:00', 'DD-MM-YYYY HH:mm', CONFIG.TIMEZONE);
+    const diffDays = targetDate.diff(now, 'days');
+    const diffHours = targetDate.diff(now, 'hours') % 24;
+
+    const text = `⏳ *SEMESTER EXAMINATION COUNTDOWN*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `📅 *Target Exam Date:* 15 November 2026, 10:00 AM\n` +
+      `⏰ *Time Remaining:* *${diffDays} Days, ${diffHours} Hours*\n\n` +
+      `💡 *Pro Tip for Physics Students:*\n` +
+      `Daily 1 derivations sheet + 2 numerical problems solve karein!\n` +
+      `Use \`/formula\` for daily formulas and \`/deadlines\` for assignment dates.\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━\n_Department of Physics • Dinhata College_`;
+    await tgBot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
   });
 
   // /formula on Telegram
@@ -1542,37 +1885,43 @@ if (tgBot) {
 
   // /fees on Telegram
   tgBot.onText(/\/fees/, async (msg) => {
-    const reply = `💳 *SEMESTER FEES & FORM FILL-UP GUIDE*\n` +
+    const reply = `💳 *DINHATA COLLEGE • SEMESTER FEES & PORTAL GUIDE*\n` +
       `━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-      `📊 *Even Semester Fee Breakdown:*\n` +
-      `• Regular University Exam Fee: ₹850\n` +
-      `• Physics Practical Lab & Instrument Fee: ₹300\n` +
-      `• *Total Payable Amount:* *₹1,150*\n\n` +
-      `📅 *Important Dates:*\n` +
-      `• Last Date (Without Late Fine): *15 October 2026*\n` +
-      `• Late Fine Window (₹200 extra): *16 – 20 October 2026*\n` +
-      `• Admit Card Generation: *25 October 2026*\n\n` +
-      `🔗 *Official Payment Portal:* dinhata-college.ac.in/fees\n` +
+      `📊 *B.Sc Major (Physics NEP / NCCF) Fee Structure:*\n` +
+      `• Admission Fee: ₹200\n` +
+      `• Laboratory Development & Maintenance: ₹500 - ₹800\n` +
+      `• College Automation, Library, IT & SMS Service: ₹490\n` +
+      `• *Total College Semester Fee:* *₹1,490 – ₹2,490* (per semester)\n\n` +
+      `📝 *University Exam Form Fill-up (CBPBU):*\n` +
+      `• Regular Exam Fee + Practical Lab Exam: *₹850 – ₹1,150*\n\n` +
+      `🔗 *Official Working Online Portals:*\n` +
+      `• 🌐 College Admission & Fees: https://dinhatacollege.ac.in\n` +
+      `  _(Click 'Admission & Form Fill Up' on homepage)_\n` +
+      `• 🌐 University Exam Form & Admit Card: https://cbpbu.net\n` +
+      `• 🌐 Cooch Behar University Main: https://cbpbu.ac.in\n\n` +
       `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-      `💡 Payment receipt college office mein submit karein.`;
+      `💡 Fee payment ke baad payment receipt download karke college office mein counter-sign karwayein.`;
     await tgBot.sendMessage(msg.chat.id, reply, { parse_mode: 'Markdown' });
   });
 
   // /circulars on Telegram
   tgBot.onText(/\/circulars/, async (msg) => {
-    const reply = `📢 *OFFICIAL COLLEGE NOTICES & CIRCULARS*\n` +
+    const reply = `📢 *OFFICIAL DINHATA COLLEGE NOTICES & CIRCULARS*\n` +
       `━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-      `1. 📝 *Even Semester Examination Form Fillup 2026*\n` +
-      `   • Exam Form submission active on portal.\n` +
-      `   • Link: dinhata-college.ac.in/notice/exam-even-2026.pdf\n\n` +
-      `2. 🔬 *Physics Practical Exam & Laboratory Viva Routine*\n` +
-      `   • Major 3 & Major 4 practical dates announced.\n` +
-      `   • Link: dinhata-college.ac.in/notice/physics-practical-2026.pdf\n\n` +
-      `3. 🎓 *SVMCM & Oasis Scholarship Renewal 2026-27*\n` +
-      `   • BDO Income Certificate & marksheet counter-signature.\n` +
-      `   • Link: svmcm.wbhed.gov.in\n\n` +
+      `1. 📝 *Reopening of Online Admission & Semester Fee Portal (NCCF)*\n` +
+      `   • 4-Year UG Program 3rd, 5th & 7th Semester online payment portal active.\n` +
+      `   • 🌐 Portal: https://dinhatacollege.ac.in\n\n` +
+      `2. 🎓 *CBPBU University Examination Form Fill-up & Admit Card*\n` +
+      `   • Semester examination forms, admit card & grade sheets.\n` +
+      `   • 🌐 Portal: https://cbpbu.net\n\n` +
+      `3. 🔬 *Physics Practical Sessions & Lab Records Submission*\n` +
+      `   • Major 3 & Major 4 practical record books verification in Department Lab.\n` +
+      `   • 🌐 Notice Board: https://dinhatacollege.ac.in\n\n` +
+      `4. 💳 *SVMCM & Aikyashree Scholarship Document Verification*\n` +
+      `   • Income certificate & marksheet counter-signature at College Office.\n` +
+      `   • 🌐 Portal: https://svmcm.wbhed.gov.in\n\n` +
       `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-      `🏛️ _Dinhata College Administration Office_`;
+      `🏛️ _Dinhata College, Cooch Behar • Affiliated to CBPBU_`;
     await tgBot.sendMessage(msg.chat.id, reply, { parse_mode: 'Markdown' });
   });
 
@@ -1722,12 +2071,91 @@ async function fetchWeatherForecast() {
   }
 }
 
-// ==================== HOLIDAY API (FEATURE 4) ====================
+// ==================== HOLIDAY API & ENGINE ====================
 // In-Memory cache for 24 hours (No disk storage)
 let holidayMemoryCache = {
   year: null,
   data: [],
   timestamp: 0
+};
+
+// Official Indian National & West Bengal Academic/College Holidays Database
+const BUILTIN_INDIAN_HOLIDAYS = {
+  2025: [
+    { date: '2025-01-23', name: 'Netaji Subhas Chandra Bose Jayanti', localName: 'Netaji Jayanti' },
+    { date: '2025-01-26', name: 'Republic Day', localName: 'Republic Day' },
+    { date: '2025-02-02', name: 'Saraswati Puja (Vasant Panchami)', localName: 'Saraswati Puja' },
+    { date: '2025-03-14', name: 'Dol Jatra (Holi in Bengal)', localName: 'Dol Yatra' },
+    { date: '2025-03-15', name: 'Holi', localName: 'Holi' },
+    { date: '2025-03-31', name: 'Eid-ul-Fitr', localName: 'Eid-ul-Fitr' },
+    { date: '2025-04-14', name: 'Dr. B.R. Ambedkar Jayanti', localName: 'Ambedkar Jayanti' },
+    { date: '2025-04-15', name: 'Bengali New Year (Poila Boishakh)', localName: 'Poila Boishakh' },
+    { date: '2025-04-18', name: 'Good Friday', localName: 'Good Friday' },
+    { date: '2025-05-01', name: 'May Day (Labour Day)', localName: 'May Day' },
+    { date: '2025-05-09', name: 'Rabindra Jayanti', localName: 'Tagore Birthday' },
+    { date: '2025-06-07', name: 'Eid-ul-Adha (Bakrid)', localName: 'Bakrid' },
+    { date: '2025-07-06', name: 'Muharram', localName: 'Muharram' },
+    { date: '2025-08-15', name: 'Independence Day', localName: 'Independence Day' },
+    { date: '2025-08-16', name: 'Janmashtami', localName: 'Janmashtami' },
+    { date: '2025-09-05', name: 'Fateha-Dwaz-Daham (Milad-un-Nabi)', localName: 'Milad-un-Nabi' },
+    { date: '2025-10-02', name: 'Mahatma Gandhi Jayanti', localName: 'Gandhi Jayanti' },
+    { date: '2025-10-01', name: 'Maha Saptami (Durga Puja)', localName: 'Saptami' },
+    { date: '2025-10-02', name: 'Maha Ashtami / Navami (Durga Puja)', localName: 'Ashtami-Navami' },
+    { date: '2025-10-03', name: 'Vijaya Dashami (Durga Puja)', localName: 'Bijoya Dashami' },
+    { date: '2025-10-06', name: 'Lakshmi Puja', localName: 'Lakshmi Puja' },
+    { date: '2025-10-20', name: 'Kali Puja / Diwali', localName: 'Diwali' },
+    { date: '2025-10-23', name: 'Bhatridwitiya (Bhai Dooj)', localName: 'Bhai Phota' },
+    { date: '2025-10-28', name: 'Chhath Puja', localName: 'Chhath Puja' },
+    { date: '2025-11-05', name: 'Guru Nanak Jayanti', localName: 'Guru Nanak Jayanti' },
+    { date: '2025-12-25', name: 'Christmas Day', localName: 'Christmas' }
+  ],
+  2026: [
+    { date: '2026-01-23', name: 'Netaji Subhas Chandra Bose Jayanti', localName: 'Netaji Jayanti' },
+    { date: '2026-01-26', name: 'Republic Day', localName: 'Republic Day' },
+    { date: '2026-02-15', name: 'Saraswati Puja (Vasant Panchami)', localName: 'Saraswati Puja' },
+    { date: '2026-03-03', name: 'Dol Jatra (Holi in Bengal)', localName: 'Dol Yatra' },
+    { date: '2026-03-04', name: 'Holi', localName: 'Holi' },
+    { date: '2026-03-21', name: 'Eid-ul-Fitr', localName: 'Eid-ul-Fitr' },
+    { date: '2026-03-26', name: 'Ram Navami', localName: 'Ram Navami' },
+    { date: '2026-04-03', name: 'Good Friday', localName: 'Good Friday' },
+    { date: '2026-04-14', name: 'Dr. B.R. Ambedkar Jayanti', localName: 'Ambedkar Jayanti' },
+    { date: '2026-04-15', name: 'Bengali New Year (Poila Boishakh)', localName: 'Poila Boishakh' },
+    { date: '2026-05-01', name: 'May Day (Labour Day)', localName: 'May Day' },
+    { date: '2026-05-09', name: 'Rabindra Jayanti (Tagore Birthday)', localName: 'Rabindra Jayanti' },
+    { date: '2026-05-27', name: 'Eid-ul-Adha (Bakrid)', localName: 'Bakrid' },
+    { date: '2026-06-26', name: 'Muharram', localName: 'Muharram' },
+    { date: '2026-08-15', name: 'Independence Day', localName: 'Independence Day' },
+    { date: '2026-08-26', name: 'Janmashtami', localName: 'Krishna Janmashtami' },
+    { date: '2026-09-04', name: 'Fateha-Dwaz-Daham (Milad-un-Nabi)', localName: 'Milad-un-Nabi' },
+    { date: '2026-10-02', name: 'Mahatma Gandhi Jayanti', localName: 'Gandhi Jayanti' },
+    { date: '2026-10-18', name: 'Maha Sasthi (Durga Puja)', localName: 'Sasthi' },
+    { date: '2026-10-19', name: 'Maha Saptami (Durga Puja)', localName: 'Saptami' },
+    { date: '2026-10-20', name: 'Maha Ashtami (Durga Puja)', localName: 'Ashtami' },
+    { date: '2026-10-21', name: 'Maha Navami (Durga Puja)', localName: 'Navami' },
+    { date: '2026-10-22', name: 'Vijaya Dashami (Durga Puja)', localName: 'Bijoya Dashami' },
+    { date: '2026-10-25', name: 'Lakshmi Puja', localName: 'Kojagari Lakshmi Puja' },
+    { date: '2026-11-08', name: 'Kali Puja / Diwali', localName: 'Diwali & Shyama Puja' },
+    { date: '2026-11-10', name: 'Bhatridwitiya (Bhai Dooj)', localName: 'Bhai Phota' },
+    { date: '2026-11-15', name: 'Chhath Puja', localName: 'Chhath Puja' },
+    { date: '2026-11-24', name: 'Guru Nanak Jayanti', localName: 'Guru Nanak Jayanti' },
+    { date: '2026-12-25', name: 'Christmas Day', localName: 'Christmas' }
+  ],
+  2027: [
+    { date: '2027-01-23', name: 'Netaji Subhas Chandra Bose Jayanti', localName: 'Netaji Jayanti' },
+    { date: '2027-01-26', name: 'Republic Day', localName: 'Republic Day' },
+    { date: '2027-02-11', name: 'Saraswati Puja (Vasant Panchami)', localName: 'Saraswati Puja' },
+    { date: '2027-03-22', name: 'Dol Jatra & Holi', localName: 'Dol Yatra' },
+    { date: '2027-04-14', name: 'Dr. B.R. Ambedkar Jayanti', localName: 'Ambedkar Jayanti' },
+    { date: '2027-04-15', name: 'Bengali New Year (Poila Boishakh)', localName: 'Poila Boishakh' },
+    { date: '2027-05-01', name: 'May Day', localName: 'May Day' },
+    { date: '2027-05-09', name: 'Rabindra Jayanti', localName: 'Rabindra Jayanti' },
+    { date: '2027-08-15', name: 'Independence Day', localName: 'Independence Day' },
+    { date: '2027-10-02', name: 'Mahatma Gandhi Jayanti', localName: 'Gandhi Jayanti' },
+    { date: '2027-10-08', name: 'Durga Puja (Maha Ashtami)', localName: 'Durga Puja' },
+    { date: '2027-10-10', name: 'Vijaya Dashami', localName: 'Bijoya Dashami' },
+    { date: '2027-10-29', name: 'Kali Puja / Diwali', localName: 'Diwali' },
+    { date: '2027-12-25', name: 'Christmas Day', localName: 'Christmas' }
+  ]
 };
 
 async function getPublicHolidays(year = moment().tz(CONFIG.TIMEZONE).year()) {
@@ -1738,36 +2166,60 @@ async function getPublicHolidays(year = moment().tz(CONFIG.TIMEZONE).year()) {
     return holidayMemoryCache.data;
   }
 
+  // 1. Try API Ninjas (if API key provided in config or env)
+  const ninjaKey = currentConfig.API_NINJAS_KEY || CONFIG.API_NINJAS_KEY || process.env.API_NINJAS_KEY;
+  if (ninjaKey) {
+    try {
+      const ninjaRes = await axios.get(`https://api.api-ninjas.com/v2/holidays?country=IN&year=${year}`, {
+        headers: { 'X-Api-Key': ninjaKey },
+        timeout: 6000
+      });
+      if (Array.isArray(ninjaRes.data) && ninjaRes.data.length > 0) {
+        const mapped = ninjaRes.data.map(item => ({
+          date: item.date,
+          name: item.name,
+          localName: item.name
+        }));
+        holidayMemoryCache = { year, data: mapped, timestamp: now };
+        console.log(`🎉 Fetched ${mapped.length} public holidays from API Ninjas for ${year}`);
+        return mapped;
+      }
+    } catch (err) {
+      console.warn(`⚠️ API Ninjas request failed (${err.message}). Trying secondary sources...`);
+    }
+  }
+
+  // 2. Try Nager.Date API
   try {
     const url = `https://date.nager.at/api/v3/PublicHolidays/${year}/IN`;
     const res = await axios.get(url, { timeout: 5000 });
-    if (Array.isArray(res.data)) {
-      holidayMemoryCache = {
-        year,
-        data: res.data,
-        timestamp: now
-      };
+    if (Array.isArray(res.data) && res.data.length > 0) {
+      holidayMemoryCache = { year, data: res.data, timestamp: now };
       console.log(`🎉 Fetched ${res.data.length} public holidays from Nager.Date API for ${year}`);
       return res.data;
     }
   } catch (err) {
-    console.warn(`⚠️ Public Holidays API failed for ${year}:`, err.message);
+    console.warn(`⚠️ Nager.Date API failed for ${year}:`, err.message);
   }
 
-  return holidayMemoryCache.data || [];
+  // 3. Authoritative Fallback: Built-in Indian & West Bengal Academic Calendar
+  const fallbackList = BUILTIN_INDIAN_HOLIDAYS[year] || BUILTIN_INDIAN_HOLIDAYS[2026] || [];
+  holidayMemoryCache = { year, data: fallbackList, timestamp: now };
+  console.log(`📅 Loaded ${fallbackList.length} Indian & Bengal College holidays from authoritative built-in calendar for ${year}`);
+  return fallbackList;
 }
 
 /**
- * Manual (holidays.json) + API holidays dono check karta hai
+ * Manual (holidays.json) + API/Built-in holidays dono check karta hai
  * format input: DD-MM-YYYY
  */
 async function checkIsHoliday(dateStrDDMMYYYY) {
-  // 1. Check manual holidays array
+  // 1. Check manual holidays array (set via !holidaytoday or !addholiday)
   if (holidays.includes(dateStrDDMMYYYY)) {
-    return { isHoliday: true, name: 'College Holiday', isManual: true };
+    return { isHoliday: true, name: 'College Holiday (Declared by Admin)', isManual: true };
   }
 
-  // 2. Check API holidays
+  // 2. Check API / Official Public Holidays
   try {
     const targetMoment = moment(dateStrDDMMYYYY, 'DD-MM-YYYY');
     const year = targetMoment.year();
@@ -1779,7 +2231,7 @@ async function checkIsHoliday(dateStrDDMMYYYY) {
       return { isHoliday: true, name: match.name || match.localName, isManual: false };
     }
   } catch (e) {
-    console.error('Error checking holiday API:', e.message);
+    console.error('Error checking holiday engine:', e.message);
   }
 
   return { isHoliday: false, name: null };
@@ -2240,13 +2692,19 @@ async function handleCommonCommands(sender, text, lowerText, isAdmin, senderNumb
         `• !nextholiday - Days left for next public holiday\n` +
         `• !publicholidays - All Indian public holidays\n\n` +
         `*🎓 Student Smart Features:*\n` +
-        `• !mycard - Official Digital Student ID Card (Picture Form)\n` +
+        `• !mycard [Roll_No] - Official Digital ID Card Image (e.g. !mycard 25PHSM2107)\n` +
+        `• !bunk <attended> <total> - Safe Bunk & 75% Attendance Calculator\n` +
+        `• !gpa <SGPA> - University SGPA to Percentage & Division\n` +
+        `• !qr <link/text> - Instant QR Code Image Generator\n` +
+        `• !const [symbol] - Physics Constants Cheatsheet (c, h, G, e, me)\n` +
         `• !formula - Physics Formula of the day\n` +
         `• !deadlines - Assignment & lab deadline countdown\n` +
+        `• !examdays - Semester exam countdown & tips\n` +
         `• !fees - Semester fee structure & portal link\n` +
         `• !circulars - Official college circulars & notices\n` +
-        `• !report <msg> - Anonymous student grievance / feedback\n` +
-        `• !verify Roll_No Full_Name - Link student profile\n` +
+        `• !quiz - Quick Physics challenge question\n` +
+        `• !doubt <question> - Send academic doubt/grievance to CR/Admin\n` +
+        `• !verify 25PHSM2107 Full_Name - Link student profile\n` +
         `• !myinfo - View your verified student profile\n\n` +
         `*📖 Syllabus Commands:*\n` +
         `• !syllabus major3 - Waves & Optics\n` +
@@ -2331,9 +2789,53 @@ async function handleCommonCommands(sender, text, lowerText, isAdmin, senderNumb
             `• Monte Carlo simulations`
         });
       } else {
-        await sock.sendMessage(sender, {
-          text: `❌ Syllabus image not found for ${subject}. Please add the image in ${imagePath}`
-        });
+        let syllabusText = `📚 *${SYLLABUS_TITLES[subject]}*\n` +
+          `🏛️ *Department of Physics • Dinhata College (CBPBU NEP)*\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+        if (subject === 'major3') {
+          syllabusText += `🔬 *Unit 1: Wave Motion & Superposition*\n` +
+            `• Simple harmonic oscillations, wave equation, phase & group velocity.\n` +
+            `• Superposition of collinear harmonic oscillations, Lissajous figures.\n\n` +
+            `🔬 *Unit 2: Interference of Light*\n` +
+            `• Division of Wavefront: Fresnel Biprism, Lloyd's Mirror.\n` +
+            `• Division of Amplitude: Thin films, Newton's Rings, Michelson Interferometer.\n\n` +
+            `🔬 *Unit 3: Diffraction of Light*\n` +
+            `• Fresnel Diffraction: Half-period zones, Zone plate, circular aperture.\n` +
+            `• Fraunhofer Diffraction: Single slit, double slit, N-slits, Transmission grating.\n\n` +
+            `🔬 *Unit 4: Polarization*\n` +
+            `• Brewster's Law, Double refraction, Nicol prism, Retardation plates (Quarter & Half wave).`;
+        } else if (subject === 'major3lab') {
+          syllabusText += `🧪 *Practical Laboratory Experiments:*\n` +
+            `1. Measurement of wavelength of Sodium light using Newton's Rings.\n` +
+            `2. Determination of refractive index of liquid using Newton's Rings.\n` +
+            `3. Wavelength of spectral lines by Transmission Diffraction Grating.\n` +
+            `4. Determination of dispersive power of prism material using Spectrometer.\n` +
+            `5. Measurement of Brewster angle and verification of Brewster's law.`;
+        } else if (subject === 'major4') {
+          syllabusText += `⚡ *Unit 1: Semiconductor Physics & Diodes*\n` +
+            `• P-N junction characteristics, Zener diode as voltage regulator, Tunnel diode.\n\n` +
+            `⚡ *Unit 2: Bipolar Junction Transistors (BJT)*\n` +
+            `• CE, CB, CC configurations, load line analysis, operating point, thermal stability.\n` +
+            `• Biasing circuits, h-parameter equivalent circuit of CE amplifier.\n\n` +
+            `⚡ *Unit 3: Operational Amplifiers (Op-Amp)*\n` +
+            `• Ideal op-amp characteristics, Virtual Ground concept, CMRR, Slew Rate.\n` +
+            `• Inverting, Non-inverting amplifier, Adder, Subtractor, Differentiator, Integrator.\n\n` +
+            `⚡ *Unit 4: Feedback & Oscillators*\n` +
+            `• Barkhausen criterion, Wien-Bridge Oscillator, Phase Shift Oscillator.`;
+        } else if (subject === 'major4lab') {
+          syllabusText += `🧪 *Practical Laboratory Experiments:*\n` +
+            `1. V-I characteristics of PN junction diode and Zener diode.\n` +
+            `2. Output and transfer characteristics of BJT in CE configuration.\n` +
+            `3. Inverting and non-inverting amplifier using IC 741 Op-Amp.\n` +
+            `4. Op-Amp as Adder and Subtractor.\n` +
+            `5. Study of Wien-Bridge / Phase Shift Oscillator.`;
+        }
+        syllabusText += `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `🌐 *Complete Official Syllabus Portal:* https://cbpbu.ac.in\n` +
+          `_(Under CBPBU Academic -> Syllabus -> B.Sc Physics NEP-2020)_`;
+
+        await sock.sendMessage(sender, { text: syllabusText });
       }
       return true;
     }
@@ -2352,20 +2854,36 @@ async function handleCommonCommands(sender, text, lowerText, isAdmin, senderNumb
         await sock.sendMessage(sender, {
           text: `📌 *Student Verification Format:*\n` +
             `\`!verify <College_Roll_No> <Your Full Name>\`\n\n` +
-            `*Example:* \`!verify 230101 Rahul Dey\`\n\n` +
+            `*Example:* \`!verify 25PHSM2107 Rahul Dey\`\n\n` +
             `💡 Yeh aapke WhatsApp number ko college roll number se officially link kar dega.`
         });
         return true;
       }
 
-      const roll = parts[0].trim();
+      const roll = parts[0].trim().toUpperCase();
       const name = parts.slice(1).join(' ').trim();
 
+      if (!isValidRoll(roll)) {
+        await sock.sendMessage(sender, {
+          text: `❌ *Invalid Roll Number Format!*\nSahi college format dein: *25PHSM2107*\n*Example:* !verify 25PHSM2107 ${name}`
+        });
+        return true;
+      }
+
       // Check if roll number registered to another phone
-      const existingRoll = students.find(s => s.roll.toLowerCase() === roll.toLowerCase());
+      const existingRoll = students.find(s => s.roll && s.roll.toLowerCase() === roll.toLowerCase());
       if (existingRoll && existingRoll.sender !== sender) {
         await sock.sendMessage(sender, {
           text: `⚠️ *Roll Number Already Claimed!*\n\nRoll number *${roll}* is already registered to *${existingRoll.name}*.\nAgar yeh aapka roll number hai, to please College Admin se contact karein.`
+        });
+        return true;
+      }
+
+      // Check if student name registered to another phone (Prevent duplicate name registrations)
+      const existingName = students.find(s => s.name && s.name.trim().toLowerCase() === name.toLowerCase());
+      if (existingName && existingName.sender !== sender) {
+        await sock.sendMessage(sender, {
+          text: `⚠️ *Name Already Registered!*\n\n*${name}* naam pehle se roll number *${existingName.roll}* ke saath kisi aur WhatsApp number par registered hai.\nEk hi name se do alag users register nahi ho sakte.\nAgar yeh aapka naam hai, to please College Admin se contact karein.`
         });
         return true;
       }
@@ -2422,21 +2940,55 @@ async function handleCommonCommands(sender, text, lowerText, isAdmin, senderNumb
       return true;
     }
 
-    // 10. !mycard / !idcard (Picture ID Card Generator)
-    if (lowerText === '!mycard' || lowerText === '!idcard') {
+    // 10. !mycard / !idcard (Picture ID Card Generator with Roll Enforcement)
+    if (lowerText === '!mycard' || lowerText === '!idcard' || lowerText.startsWith('!mycard ') || lowerText.startsWith('!idcard ')) {
       const limit = checkRateLimit(senderNumber, isAdmin);
       if (limit.limited) {
         await sock.sendMessage(sender, { text: `⏳ Please wait ${limit.waitSeconds}s.` });
         return true;
       }
-      let student = students.find(s => s.sender && s.sender.replace(/\D/g, '') === senderNumber.replace(/\D/g, ''));
-      if (!student) {
-        student = Object.values(users.linked || {}).find(u => u.name);
-      }
-      const sName = student ? student.name : 'College Student';
-      const sRoll = student ? (student.roll || student.roll_no || '2024PHY001') : '2024PHY001';
 
-      await sock.sendMessage(sender, { text: '🎨 Generating official High-Resolution Digital Student ID Card for you... Please wait.' });
+      const rawArg = text.replace(/^!(mycard|idcard)\s*/i, '').trim();
+      let sRoll = '';
+      let sName = '';
+
+      if (rawArg) {
+        const parts = rawArg.split(/\s+/);
+        const candidateRoll = parts[0].toUpperCase();
+        if (isValidRoll(candidateRoll)) {
+          sRoll = candidateRoll;
+          sName = parts.slice(1).join(' ').trim();
+        } else {
+          await sock.sendMessage(sender, {
+            text: `❌ *Invalid Roll Number Format!*\n\nSahi format mein roll number dein:\n👉 *Example:* !mycard 25PHSM2107\n👉 *Ya:* !mycard 25PHSM2107 Rahul Dey`
+          });
+          return true;
+        }
+      }
+
+      // If roll not given in command, check if sender is verified via !verify
+      if (!sRoll) {
+        const student = students.find(s => s.sender && s.sender.replace(/\D/g, '') === senderNumber.replace(/\D/g, ''));
+        if (student && student.roll) {
+          sRoll = student.roll.toUpperCase();
+          if (!sName) sName = student.name;
+        }
+      }
+
+      // If STILL no roll, REJECT and require roll number!
+      if (!sRoll) {
+        await sock.sendMessage(sender, {
+          text: `⚠️ *Roll Number Required to Generate ID Card!*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nID Card generate karne ke liye pehle apna Roll Number batayein.\n\n👉 *Direct mangwayein:*\n*!mycard 25PHSM2107*\n(ya *!mycard 25PHSM2107 Aapka Naam*)\n\n👉 *Ya pehle permanent profile verify karein:*\n*!verify 25PHSM2107 Aapka Naam*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n_Format: 25PHSM2107_`
+        });
+        return true;
+      }
+
+      if (!sName) {
+        const matched = students.find(s => s.roll && s.roll.toUpperCase() === sRoll);
+        sName = matched ? matched.name : 'Physics Student';
+      }
+
+      await sock.sendMessage(sender, { text: `🎨 Generating official High-Resolution Digital Student ID Card for *${sRoll}*... Please wait.` });
       try {
         const pngBuffer = await generateStudentIdCard({
           name: sName,
@@ -2452,6 +3004,230 @@ async function handleCommonCommands(sender, text, lowerText, isAdmin, senderNumb
       } catch (err) {
         await sock.sendMessage(sender, { text: `❌ Failed to render ID Card image: ${err.message}` });
       }
+      return true;
+    }
+
+    // 10A. !bunk (Safe Attendance Bunk & 75% Criteria Calculator)
+    if (lowerText.startsWith('!bunk')) {
+      const limit = checkRateLimit(senderNumber, isAdmin);
+      if (limit.limited) {
+        await sock.sendMessage(sender, { text: `⏳ Please wait ${limit.waitSeconds}s.` });
+        return true;
+      }
+      const args = text.replace(/^!bunk\s*/i, '').trim().split(/\s+/);
+      if (args.length < 2 || !args[0] || !args[1]) {
+        await sock.sendMessage(sender, {
+          text: `🎯 *ATTENDANCE SAFE BUNK CALCULATOR (75% Rule)*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nJaniye kitni classes safely miss kar sakte hain ya kitni attend karni padengi!\n\n👉 *Usage:* !bunk <Attended> <Total>\n👉 *Example:* !bunk 18 24 (18 attend kiye out of 24)\n👉 *Example:* !bunk 12 20\n━━━━━━━━━━━━━━━━━━━━━━━━━`
+        });
+        return true;
+      }
+      const attended = parseInt(args[0], 10);
+      const total = parseInt(args[1], 10);
+      const res = calculateAttendanceBunk(attended, total, 75);
+      if (res.error) {
+        await sock.sendMessage(sender, { text: `❌ ${res.error}` });
+        return true;
+      }
+      await sock.sendMessage(sender, {
+        text: `📊 *ATTENDANCE ANALYSIS (75% CRITERIA)*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `✅ *Classes Attended:* ${attended} / ${total}\n` +
+          `📈 *Current Percentage:* *${res.currentPct}%*\n` +
+          `🎯 *Mandatory Target:* 75.0%\n\n` +
+          `${res.message}\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━\n_Department of Physics, Dinhata College_`
+      });
+      return true;
+    }
+
+    // 10B. !gpa / !cgpa (SGPA to Percentage Converter)
+    if (lowerText.startsWith('!gpa') || lowerText.startsWith('!cgpa')) {
+      const limit = checkRateLimit(senderNumber, isAdmin);
+      if (limit.limited) {
+        await sock.sendMessage(sender, { text: `⏳ Please wait ${limit.waitSeconds}s.` });
+        return true;
+      }
+      const arg = text.replace(/^!(gpa|cgpa)\s*/i, '').trim();
+      if (!arg) {
+        await sock.sendMessage(sender, {
+          text: `🧮 *UNIVERSITY SGPA/CGPA TO PERCENTAGE CONVERTER*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n👉 *Single Semester:* !gpa 8.4\n👉 *Multi Semester Average:* !gpa 8.2 7.9 8.5 8.1\n━━━━━━━━━━━━━━━━━━━━━━━━━\n_Formula: (SGPA - 0.75) * 10 (University / UGC Standard)_`
+        });
+        return true;
+      }
+      const res = convertGpaToPercentage(arg);
+      if (!res) {
+        await sock.sendMessage(sender, { text: `❌ Please provide valid numbers between 0 and 10! Example: !gpa 8.2` });
+        return true;
+      }
+      await sock.sendMessage(sender, {
+        text: `🎓 *ACADEMIC GRADE & PERCENTAGE REPORT*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `📊 *Calculated SGPA/CGPA:* *${res.avg}* (from ${res.count} input${res.count > 1 ? 's' : ''})\n` +
+          `🎖️ *Letter Grade:* *${res.gradeLetter}*\n` +
+          `🏆 *Academic Division:* *${res.division}*\n\n` +
+          `📈 *Equivalent Marks:* *${res.pctUgc}%*\n` +
+          `_Formula: (SGPA - 0.75) × 10 (State University / UGC)_\n` +
+          `📐 *Secondary Scale:* ${res.pct95}% (at 9.5x scale)\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━\n_Dinhata College Examination Wing_`
+      });
+      return true;
+    }
+
+    // 10C. !qr / !qrcode (Instant QR Code Image Generator)
+    if (lowerText.startsWith('!qr ') || lowerText.startsWith('!qrcode ')) {
+      const limit = checkRateLimit(senderNumber, isAdmin);
+      if (limit.limited) {
+        await sock.sendMessage(sender, { text: `⏳ Please wait ${limit.waitSeconds}s.` });
+        return true;
+      }
+      const content = text.replace(/^!(qr|qrcode)\s*/i, '').trim();
+      if (!content) {
+        await sock.sendMessage(sender, {
+          text: `🔲 *INSTANT QR CODE GENERATOR*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nApne drive notes, Google form, ya link ka QR code banayein!\n\n👉 *Usage:* !qr <Link ya Text>\n👉 *Example:* !qr https://dinhata-college.ac.in`
+        });
+        return true;
+      }
+      try {
+        const qrBuf = await QRCode.toBuffer(content, {
+          width: 600,
+          margin: 2,
+          color: { dark: '#0f172a', light: '#ffffff' }
+        });
+        await sock.sendMessage(sender, {
+          image: qrBuf,
+          caption: `🔲 *INSTANT QR CODE GENERATED*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n🔗 *Content:* ${content}\n\n📱 Kisi bhi smartphone camera ya QR scanner se scan karein!`
+        });
+      } catch (err) {
+        await sock.sendMessage(sender, { text: `❌ QR code generation failed: ${err.message}` });
+      }
+      return true;
+    }
+
+    // 10D. !const / !constants (Physics Scientific Constants)
+    if (lowerText.startsWith('!const') || lowerText.startsWith('!constants')) {
+      const limit = checkRateLimit(senderNumber, isAdmin);
+      if (limit.limited) {
+        await sock.sendMessage(sender, { text: `⏳ Please wait ${limit.waitSeconds}s.` });
+        return true;
+      }
+      const query = text.replace(/^!(constants|const)\s*/i, '').trim().toLowerCase();
+      if (query) {
+        const matched = SCIENTIFIC_CONSTANTS.filter(c => 
+          c.key === query || c.symbol.toLowerCase() === query || c.name.toLowerCase().includes(query)
+        );
+        if (matched.length === 0) {
+          await sock.sendMessage(sender, { text: `❌ Constant '${query}' nahi mila! Sirf !const likhkar poori list dekhein.` });
+          return true;
+        }
+        let reply = `🔬 *PHYSICS CONSTANT LOOKUP*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+        matched.forEach(c => {
+          reply += `⚛️ *${c.name}* (${c.symbol})\n` +
+            `   Value: *${c.value}*\n` +
+            `   SI Unit: ${c.unit}\n\n`;
+        });
+        await sock.sendMessage(sender, { text: reply.trim() });
+        return true;
+      }
+      let reply = `🔬 *ESSENTIAL PHYSICAL CONSTANTS TABLE*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+      SCIENTIFIC_CONSTANTS.slice(0, 10).forEach(c => {
+        reply += `• *${c.name}* (${c.symbol}): \`${c.value}\`\n`;
+      });
+      reply += `\n━━━━━━━━━━━━━━━━━━━━━━━━━\n_Specific search ke liye: !const c, !const h, !const me_`;
+      await sock.sendMessage(sender, { text: reply });
+      return true;
+    }
+
+    // 10E. !examdays (Semester Exam Countdown)
+    if (lowerText === '!examdays' || lowerText === '!countdown') {
+      const limit = checkRateLimit(senderNumber, isAdmin);
+      if (limit.limited) {
+        await sock.sendMessage(sender, { text: `⏳ Please wait ${limit.waitSeconds}s.` });
+        return true;
+      }
+      const now = moment().tz(currentConfig.TIMEZONE);
+      const targetDate = moment.tz('15-11-2026 10:00', 'DD-MM-YYYY HH:mm', currentConfig.TIMEZONE);
+      const diffDays = targetDate.diff(now, 'days');
+      const diffHours = targetDate.diff(now, 'hours') % 24;
+
+      const reply = `⏳ *SEMESTER EXAMINATION COUNTDOWN*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+        `📅 *Target Exam Date:* 15 November 2026, 10:00 AM\n` +
+        `⏰ *Time Remaining:* *${diffDays} Days, ${diffHours} Hours*\n\n` +
+        `💡 *Pro Tip for Physics Students:*\n` +
+        `Daily 1 derivation sheet + 2 numerical problems solve karein!\n` +
+        `Use *!formula* for daily formulas and *!deadlines* for lab dates.\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━\n_Department of Physics • Dinhata College_`;
+      await sock.sendMessage(sender, { text: reply });
+      return true;
+    }
+
+    // 10F. !quiz (Interactive Physics Challenge)
+    if (lowerText === '!quiz') {
+      const limit = checkRateLimit(senderNumber, isAdmin);
+      if (limit.limited) {
+        await sock.sendMessage(sender, { text: `⏳ Please wait ${limit.waitSeconds}s.` });
+        return true;
+      }
+      const quizList = [
+        { q: "What is the speed of electromagnetic waves in vacuum?", a: "c = 3 × 10⁸ m/s", hint: "Derived from Maxwell equations: c = 1/√(μ₀ε₀)" },
+        { q: "In Newton's rings experiment by reflection, what is the central spot?", a: "DARK spot", hint: "Due to 180° (π) phase reversal at the denser medium." },
+        { q: "What is the open-loop voltage gain of an ideal Op-Amp?", a: "Infinite (∞)", hint: "Ideal op-amp has infinite gain and infinite input impedance." },
+        { q: "According to Heisenberg's Uncertainty Principle, Δx · Δp is greater than or equal to what?", a: "ℏ / 2 (or h / 4π)", hint: "Fundamental limit of quantum measurement precision." },
+        { q: "Which law states that tan(i_p) = μ for complete polarization by reflection?", a: "Brewster's Law", hint: "Reflected and refracted rays are mutually perpendicular at Brewster angle." }
+      ];
+      const pick = quizList[Math.floor(Math.random() * quizList.length)];
+      await sock.sendMessage(sender, {
+        text: `🧠 *QUICK PHYSICS CHALLENGE*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+          `❓ *Question:* ${pick.q}\n\n` +
+          `💡 *Hint:* _${pick.hint}_\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `👉 *Answer:* ||*${pick.a}*||\n` +
+          `_(Tap or select spoiler to reveal answer!)_`
+      });
+      return true;
+    }
+
+    // 10G. !doubt / !ask (Anonymous Doubt Drop Box)
+    if (lowerText.startsWith('!doubt') || lowerText.startsWith('!ask')) {
+      const limit = checkRateLimit(senderNumber, isAdmin);
+      if (limit.limited) {
+        await sock.sendMessage(sender, { text: `⏳ Please wait ${limit.waitSeconds}s.` });
+        return true;
+      }
+      const doubtText = text.replace(/^!(doubt|ask)\s*/i, '').trim();
+      if (!doubtText) {
+        await sock.sendMessage(sender, {
+          text: `ℹ️ *Usage:* !doubt <Aapka Physics question ya college problem>\n*Example:* !doubt Sir kal practical notebook check hogi kya?`
+        });
+        return true;
+      }
+      const ticketId = (tickets.length + 1).toString();
+      const newTicket = {
+        id: ticketId,
+        sender,
+        senderNumber,
+        text: doubtText,
+        createdAt: new Date().toISOString(),
+        status: 'open'
+      };
+      tickets.push(newTicket);
+      saveTickets();
+
+      if (tgBot && CONFIG.TELEGRAM_ADMIN_CHAT_ID) {
+        try {
+          await tgBot.sendMessage(
+            CONFIG.TELEGRAM_ADMIN_CHAT_ID,
+            `📩 *NEW STUDENT DOUBT (Ticket #${ticketId})*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+            `❓ *Doubt:* ${doubtText}\n` +
+            `📱 *From:* +${senderNumber}\n\n` +
+            `👉 *Direct Reply:* \`/reply ${ticketId} Aapka answer yahan\``,
+            { parse_mode: 'Markdown' }
+          );
+        } catch (e) {
+          console.error('Failed to notify TG admin about doubt:', e.message);
+        }
+      }
+
+      await sock.sendMessage(sender, {
+        text: `✅ *Doubt / Query Submitted Successfully!*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n🎫 *Ticket ID:* #${ticketId}\n\nAapka doubt Class Representative & Admin ko forward kar diya gaya hai.\nJawab aate hi aapko WhatsApp par update mil jayega! 📨`
+      });
       return true;
     }
 
@@ -2584,19 +3360,22 @@ async function handleCommonCommands(sender, text, lowerText, isAdmin, senderNumb
         await sock.sendMessage(sender, { text: `⏳ Please wait ${limit.waitSeconds}s.` });
         return true;
       }
-      const reply = `📢 *OFFICIAL COLLEGE NOTICES & CIRCULARS*\n` +
+      const reply = `📢 *OFFICIAL DINHATA COLLEGE NOTICES & CIRCULARS*\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-        `1. 📝 *Even Semester Examination Form Fillup 2026*\n` +
-        `   • Exam Form submission active on portal.\n` +
-        `   • Link: dinhata-college.ac.in/notice/exam-even-2026.pdf\n\n` +
-        `2. 🔬 *Physics Practical Exam & Laboratory Viva Routine*\n` +
-        `   • Major 3 & Major 4 practical dates announced.\n` +
-        `   • Link: dinhata-college.ac.in/notice/physics-practical-2026.pdf\n\n` +
-        `3. 🎓 *SVMCM & Oasis Scholarship Renewal 2026-27*\n` +
-        `   • BDO Income Certificate & marksheet counter-signature at College Office.\n` +
-        `   • Link: svmcm.wbhed.gov.in\n\n` +
+        `1. 📝 *Reopening of Online Admission & Semester Fee Portal (NCCF)*\n` +
+        `   • 4-Year UG Program 3rd, 5th & 7th Semester online payment portal active.\n` +
+        `   • 🌐 Portal: https://dinhatacollege.ac.in\n\n` +
+        `2. 🎓 *CBPBU University Examination Form Fill-up & Admit Card*\n` +
+        `   • Semester examination forms, admit card & grade sheets.\n` +
+        `   • 🌐 Portal: https://cbpbu.net\n\n` +
+        `3. 🔬 *Physics Practical Sessions & Lab Records Submission*\n` +
+        `   • Major 3 & Major 4 practical record books verification in Department Lab.\n` +
+        `   • 🌐 Notice Board: https://dinhatacollege.ac.in\n\n` +
+        `4. 💳 *SVMCM & Aikyashree Scholarship Document Verification*\n` +
+        `   • Income certificate & marksheet counter-signature at College Office.\n` +
+        `   • 🌐 Portal: https://svmcm.wbhed.gov.in\n\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `🏛️ _Dinhata College Administration Office_`;
+        `🏛️ _Dinhata College, Cooch Behar • Affiliated to CBPBU_`;
       await sock.sendMessage(sender, { text: reply });
       return true;
     }
@@ -2608,19 +3387,22 @@ async function handleCommonCommands(sender, text, lowerText, isAdmin, senderNumb
         await sock.sendMessage(sender, { text: `⏳ Please wait ${limit.waitSeconds}s.` });
         return true;
       }
-      const reply = `💳 *SEMESTER FEES & FORM FILL-UP GUIDE*\n` +
+      const reply = `💳 *DINHATA COLLEGE • SEMESTER FEES & PORTAL GUIDE*\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-        `📊 *Even Semester Fee Breakdown:*\n` +
-        `• Regular University Exam Fee: ₹850\n` +
-        `• Physics Practical Lab & Instrument Fee: ₹300\n` +
-        `• *Total Payable Amount:* *₹1,150*\n\n` +
-        `📅 *Important Dates:*\n` +
-        `• Last Date (Without Late Fine): *15 October 2026*\n` +
-        `• Late Fine Window (₹200 extra): *16 – 20 October 2026*\n` +
-        `• Admit Card Generation: *25 October 2026*\n\n` +
-        `🔗 *Official Payment Portal:* dinhata-college.ac.in/fees\n` +
+        `📊 *B.Sc Major (Physics NEP / NCCF) Fee Structure:*\n` +
+        `• Admission Fee: ₹200\n` +
+        `• Laboratory Development & Maintenance: ₹500 - ₹800\n` +
+        `• College Automation, Library, IT & SMS Service: ₹490\n` +
+        `• *Total College Semester Fee:* *₹1,490 – ₹2,490* (per semester)\n\n` +
+        `📝 *University Exam Form Fill-up (CBPBU):*\n` +
+        `• Regular Exam Fee + Practical Lab Exam: *₹850 – ₹1,150*\n\n` +
+        `🔗 *Official Working Online Portals:*\n` +
+        `• 🌐 College Admission & Fees: https://dinhatacollege.ac.in\n` +
+        `  _(Click 'Admission & Form Fill Up' on homepage)_\n` +
+        `• 🌐 University Exam Form & Admit Card: https://cbpbu.net\n` +
+        `• 🌐 Cooch Behar University Main: https://cbpbu.ac.in\n\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `💡 Payment receipt ka printout college office mein submit karna zaroori hai.`;
+        `💡 Fee payment ke baad payment receipt download karke college office mein counter-sign karwayein.`;
       await sock.sendMessage(sender, { text: reply });
       return true;
     }
@@ -3204,12 +3986,14 @@ function startCronJobs() {
       const noticeMsg = `📢 *COLLEGE NOTICE BOARD BULLETIN*\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
         `🏛️ *Dinhata College Official Circulars Summary:*\n` +
-        `1. 📝 *Even Semester Examination Form Fillup 2026*\n` +
-        `   • Exam Form submission portal active: dinhata-college.ac.in/notice/exam-even-2026.pdf\n\n` +
-        `2. 🔬 *Physics Practical Exam & Laboratory Viva Routine*\n` +
-        `   • Major 3 & Major 4 practical dates: dinhata-college.ac.in/notice/physics-practical-2026.pdf\n\n` +
-        `3. 🎓 *SVMCM & Oasis Scholarship Renewal*\n` +
-        `   • Document counter-signing at office: svmcm.wbhed.gov.in\n\n` +
+        `1. 📝 *Reopening of Online Admission & Semester Fee Portal (NCCF)*\n` +
+        `   • 4-Year UG Program 3rd, 5th & 7th Semester payment active: https://dinhatacollege.ac.in\n\n` +
+        `2. 🎓 *CBPBU University Examination Form Fill-up & Admit Card*\n` +
+        `   • Online examination forms & admit card download: https://cbpbu.net\n\n` +
+        `3. 🔬 *Physics Practical Sessions & Lab Records Submission*\n` +
+        `   • Department laboratory viva & practical records verification.\n\n` +
+        `4. 💳 *SVMCM & Aikyashree Scholarship Counter-signing*\n` +
+        `   • Verification at college office: https://svmcm.wbhed.gov.in\n\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `💡 Full circulars dekhne ke liye group mein type karein: *!circulars*`;
       if (sock && sock.user) {
@@ -3310,13 +4094,16 @@ async function checkClassReminders() {
 
           if (currentTime === reminderTimeStr && !sentReminders.includes(reminderId)) {
             const emoji = minutes === 30 ? '⏰' : minutes === 15 ? '⚡' : '🔥';
-            const message = `${emoji} *Class Alert!*\n\n` +
-              `📚 *Subject:* ${cls.subject}\n` +
-              `👨‍🏫 *Teacher:* ${cls.teacher}\n` +
-              `📌 *Type:* ${cls.type}\n` +
-              `📖 *Topic:* ${cls.topic}\n` +
-              `⏰ *Time:* ${cls.time}\n\n` +
-              `*${minutes} minutes until class starts!* 📖`;
+            const message = `🏛️ *DINHATA COLLEGE • DEPARTMENT OF PHYSICS*\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+              `${emoji} *UPCOMING LECTURE DISPATCH* (${minutes}m Notice)\n\n` +
+              `📖 *Paper / Course:* ${cls.subject} (${cls.type})\n` +
+              `👨‍🏫 *Faculty:* ${cls.teacher}\n` +
+              `🔬 *Topic / Agenda:* ${cls.topic}\n` +
+              `⏳ *Scheduled Slot:* *${cls.time}*\n` +
+              `📍 *Venue:* Department Classroom / Physics Lab\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+              `💡 _Students are requested to take their seats promptly and keep notebooks ready._`;
 
             try {
               await sock.sendMessage(currentConfig.GROUP_ID, { text: message });
@@ -3335,13 +4122,15 @@ async function checkClassReminders() {
       const startedId = `${todayStr}_${cls.subject}_${cls.time}`;
 
       if (currentTime === classTimeStr && !startedClasses.includes(startedId)) {
-        const message = `🎓 *Class Started!*\n\n` +
-          `📚 *Subject:* ${cls.subject}\n` +
-          `👨‍🏫 *Teacher:* ${cls.teacher}\n` +
-          `📌 *Type:* ${cls.type}\n` +
-          `📖 *Topic:* ${cls.topic}\n` +
-          `⏰ *Time:* ${cls.time}\n\n` +
-          `Best of luck everyone! Stay attentive and take good notes! 💪`;
+        const message = `🏛️ *DINHATA COLLEGE • DEPARTMENT OF PHYSICS*\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `🔔 *LECTURE NOW IN SESSION*\n\n` +
+          `📖 *Paper / Course:* ${cls.subject} (${cls.type})\n` +
+          `👨‍🏫 *Faculty:* ${cls.teacher}\n` +
+          `🔬 *Topic:* ${cls.topic}\n` +
+          `⏰ *Time Slot:* ${cls.time}\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `📌 _Class attendance is active. Please maintain strict academic decorum._`;
 
         try {
           await sock.sendMessage(currentConfig.GROUP_ID, { text: message });
@@ -3364,8 +4153,9 @@ async function sendDailyPoll() {
     const now = moment().tz(currentConfig.TIMEZONE);
     const today = now.day();
 
+    // 1. Weekend check: Friday (5) and Saturday (6) evenings
     if (CONFIG.NO_POLL_DAYS.includes(today)) {
-      console.log('📅 No poll scheduled for Friday/Saturday evening');
+      console.log('📅 No poll scheduled for Friday/Saturday evening (Weekend ahead).');
       return;
     }
 
@@ -3373,10 +4163,23 @@ async function sendDailyPoll() {
     const tomorrowDay = tomorrow.format('dddd');
     const tomorrowDateStr = tomorrow.format('DD-MM-YYYY');
 
-    // Agar kal chhutti hai to poll mat bhejo
+    // 2. Sunday check: If tomorrow is Sunday, no classes
+    if (tomorrowDay === 'Sunday') {
+      console.log('🌴 Tomorrow is Sunday (No classes), skipping poll.');
+      return;
+    }
+
+    // 3. Pre-Holiday Check: Agar kal Public Holiday ya College Holiday hai to poll bilkul nahi aayega!
     const holidayCheck = await checkIsHoliday(tomorrowDateStr);
     if (holidayCheck.isHoliday) {
-      console.log(`🌴 Kal chhutti hai (${holidayCheck.name || 'Holiday'}), skipping poll.`);
+      console.log(`🌴 Kal chhutti hai (${holidayCheck.name}), skipping poll and notifying group.`);
+      try {
+        await sock.sendMessage(currentConfig.GROUP_ID, {
+          text: `🌴 *HOLIDAY NOTIFICATION • NO POLL TONIGHT*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nKal *${holidayCheck.name}* ki chhutti hai (No Classes Tomorrow).\nIsliye aaj evening attendance poll nahi liya ja raha hai.\n\nEnjoy your holiday! 🎉`
+        });
+      } catch (e) {
+        console.error('Failed to send holiday poll skip alert:', e.message);
+      }
       return;
     }
 
